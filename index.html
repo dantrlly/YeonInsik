@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<title>成人式 - 성인식 프로젝트</title>
+<title>戀人式 - 연인식 프로젝트</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
   @import url('https://cdn.jsdelivr.net/gh/projectnoonnu/noonfonts_2001@1.1/DungGeunMo.woff');
@@ -201,6 +201,12 @@
     background: #141c30; border: 2px solid #8ea3cc; padding: 5px 8px;
     display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: 12px;
   }
+  .bgm-vol-wrap {
+    display: flex; align-items: center; gap: 5px; font-size: 11px; color: #c7d6f5;
+  }
+  .bgm-vol-slider {
+    width: 72px; accent-color: #8eb8ff; cursor: pointer; height: 14px;
+  }
   .ref-solo-box {
     background: #101729; border: 2px solid #6f89bd; padding: 5px 8px;
     display: flex; flex-direction: column; gap: 4px; font-size: 11px;
@@ -279,9 +285,21 @@
     background: #121a2e; border: 3px solid #eae2ce;
     box-shadow: 0 0 0 2px #0b101d; padding: 8px; min-width: 0;
   }
+  @keyframes tickerScroll {
+    0% { transform: translateX(0%); }
+    100% { transform: translateX(-50%); }
+  }
   .ref-marquee {
     background: #eae2ce; color: #141c30; font-size: 12px; font-weight: bold;
     padding: 4px 8px; white-space: nowrap; overflow: hidden; margin-bottom: 8px; letter-spacing: 1px;
+    position: relative;
+  }
+  .ref-marquee-track {
+    display: inline-block;
+    animation: tickerScroll 12s linear infinite;
+  }
+  .ref-marquee.alert-mode {
+    background: #1d2947; color: #f6f1e3; border: 2px solid #eae2ce;
   }
   .ref-top-grid {
     display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 0.95fr);
@@ -319,18 +337,25 @@
     font-size: 11px; line-height: 1.45; user-select: text;
   }
   .ref-chat-row { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 6px; margin-bottom: 6px; align-items: start; }
+  .ref-chat-row.player-row { grid-template-columns: minmax(0, 1fr) 30px; }
+  .ref-chat-row.player-row .ref-chat-av { order: 2; border-color: #eae2ce; background: #243359; }
+  .ref-chat-row.player-row > div:first-child { order: 1; text-align: right; }
   .ref-chat-av {
     width: 30px; height: 30px; background: #18233d; border: 1px solid #6f89bd;
     display: flex; align-items: center; justify-content: center; font-size: 11px; color: #eae2ce; overflow: hidden;
   }
   .ref-chat-av img { width: 100%; height: 100%; object-fit: cover; }
   .ref-chat-meta { font-size: 10px; color: #8eb8ff; margin-bottom: 2px; }
+  .ref-chat-row.player-row .ref-chat-meta { color: #eae2ce; }
   .ref-chat-bubble {
     background: #1b2642; color: #eae2ce; border: 1px solid #526a9c;
     padding: 5px 8px; border-radius: 2px; word-break: break-word; line-height: 1.45;
   }
+  .ref-chat-row.player-row .ref-chat-bubble {
+    background: #233258; color: #f6f1e3; border: 1px solid #eae2ce; display: inline-block; text-align: left; max-width: 96%;
+  }
   .ref-chat-bubble.npc-line {
-    background: #152038; color: #dce8ff; border-color: #6f89bd;
+    background: #141d33; color: #c7d6f5; border-color: #465d8a; font-style: normal;
   }
   .ref-chat-sys {
     color: #9ec2ff; font-size: 11px; margin-bottom: 5px; word-break: break-word;
@@ -429,6 +454,18 @@
   }
   .loot-slot:hover { background: #141c30; color: #eae2ce; }
 
+
+  @keyframes batShake {
+    0%, 100% { transform: translate(0px, 0px); }
+    20% { transform: translate(-7px, 2px); }
+    40% { transform: translate(7px, -2px); }
+    60% { transform: translate(-5px, -2px); }
+    80% { transform: translate(5px, 2px); }
+  }
+  .center-modal-box.bat-shake {
+    animation: batShake 0.24s ease-in-out;
+  }
+
   /* 낮/밤 전환 오버레이 */
   .phase-flash {
     position: fixed; inset: 0; pointer-events: none; z-index: 40;
@@ -478,8 +515,8 @@
 <!-- 1. 타이틀 -->
 <div class="view active" id="viewTitle">
   <div class="frame-box title-box">
-    <div class="logo-big">成人式</div>
-    <div class="logo-sub">— 성인식 프로젝트 —</div>
+    <div class="logo-big">戀人式</div>
+    <div class="logo-sub">— 연인식 프로젝트 —</div>
     <div class="title-col">
       <button class="btn-ivory" onclick="openAuthView('login')">로그인</button>
       <button class="btn-ivory" onclick="openAuthView('signup')">회원가입</button>
@@ -490,8 +527,8 @@
 <!-- 2. 로그인 / 회원가입 -->
 <div class="view" id="viewAuth">
   <div class="frame-box auth-card">
-    <div class="logo-big" style="font-size:46px;">成人式</div>
-    <div class="logo-sub" style="margin-bottom:20px;">— 성인식 프로젝트 —</div>
+    <div class="logo-big" style="font-size:46px;">戀人式</div>
+    <div class="logo-sub" style="margin-bottom:20px;">— 연인식 프로젝트 —</div>
     <div class="auth-field">
       <label class="auth-lbl" for="authIdInput">아이디</label>
       <input type="text" class="txt-input" id="authIdInput" placeholder="영문·숫자" maxlength="20" oninput="this.value=this.value.replace(/[^A-Za-z0-9]/g,'')">
@@ -530,11 +567,6 @@
 
         <div class="ivory-strip" style="padding:4px 8px; font-size:13px;">동아리</div>
         <div class="club-grid" id="creatorClubGrid"></div>
-        <button type="button" class="custom-club-btn" id="customClubBtn" onclick="toggleCustomClub()">✎ 직접 만들기</button>
-        <div id="customClubWrap" style="display:none; margin-bottom:8px;">
-          <input type="text" class="txt-input" id="customClubName" placeholder="동아리 이름" maxlength="10" oninput="renderCreator()" style="margin-bottom:4px; padding:6px 8px; font-size:12px;">
-          <input type="text" class="txt-input" id="customClubDesc" placeholder="동아리 효과 설명" maxlength="40" oninput="renderCreator()" style="padding:6px 8px; font-size:12px;">
-        </div>
 
         <div class="ivory-strip" style="padding:4px 8px; font-size:13px; margin-bottom:8px;">
           능력치 (남은 포인트: <span id="creatorRemPts">8</span>)
@@ -648,7 +680,11 @@
     <div class="bar-head">
       <strong id="lobbyCharBanner">실험체</strong>
       <div style="display:flex; gap:6px;">
-        <button class="btn-navy" id="btnBgmToggle" onclick="toggleBgm()">BGM: ON</button>
+        <span class="bgm-vol-wrap">
+          <button class="btn-navy" id="btnBgmToggle" onclick="toggleBgm()">BGM: ON</button>
+          <input type="range" class="bgm-vol-slider" id="lobbyBgmVol" min="0" max="100" value="75" title="BGM 볼륨" oninput="setBgmVolume(this.value)">
+          <span id="lobbyBgmVolTxt">75%</span>
+        </span>
         <button class="btn-navy" onclick="openPickerView()">캐릭터 선택</button>
         <button class="btn-navy" onclick="refreshRooms()">새로고침</button>
       </div>
@@ -712,7 +748,11 @@
 
       <div class="ref-clock-box">
         <span id="refClockText">1일차 08:00 (낮)</span>
-        <button type="button" class="ref-mini-btn" id="refPauseBtn" onclick="togglePauseGame()">일시정지</button>
+        <span style="display:flex;gap:3px;">
+          <button type="button" class="ref-mini-btn" id="refBgmBtn" onclick="toggleBgm()">BGM</button>
+          <input type="range" class="bgm-vol-slider" id="gameBgmVol" min="0" max="100" value="75" style="width:52px;" title="BGM 볼륨" oninput="setBgmVolume(this.value)">
+          <button type="button" class="ref-mini-btn" id="refPauseBtn" onclick="togglePauseGame()">일시정지</button>
+        </span>
       </div>
 
       <div class="ref-solo-box" id="refSoloControls">
@@ -765,7 +805,7 @@
     </div>
 
     <div class="ref-right">
-      <div class="ref-marquee">■ 성인식 프로젝트 ■ 成人式 ■ 성인식 프로젝트 ■ 成人式 ■ 성인식 프로젝트 ■ 成人式 ■ 성인식 프로젝트 ■ 成人式</div>
+      <div class="ref-marquee" id="refMarqueeBox"><span class="ref-marquee-track" id="refMarqueeTrack">■ 연인식 프로젝트 ■ 戀人式 ■ 연인식 프로젝트 ■ 戀人式 ■ 연인식 프로젝트 ■ 戀人式 ■ 연인식 프로젝트 ■ 戀人式</span></div>
 
       <div class="ref-top-grid">
         <div class="ref-panel">
@@ -801,7 +841,7 @@
         <div class="ref-panel">
           <div class="ref-panel-bar">행동</div>
           <div class="ref-act-col">
-            <button type="button" class="ref-act-btn" id="refBtnSearch" onclick="actRefSearch()">탐색 (8초)</button>
+            <button type="button" class="ref-act-btn" id="refBtnSearch" onclick="actRefSearch()">탐색 (10초)</button>
             <button type="button" class="ref-act-btn" id="refBtnSleep" onclick="actRefSleep()">잠자기</button>
             <button type="button" class="ref-act-btn" id="refBtnSuicide" onclick="actRefSuicide()">자결</button>
             <div class="ref-panel-bar" style="margin-top:2px;">주변 인물</div>
@@ -844,15 +884,220 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 /* 40분 플탐 기준 (1x):
    현실 1초 = 게임 6분 (하루 = 현실 4분)
    폐쇄 주기 = 현실 210초(3분 30초)마다 2구역씩 폐쇄, 마지막 40초 경고 */
-const GAME_MIN_PER_REAL_SEC = 6;
+const GAME_MIN_PER_REAL_SEC = 2.5;
 const CLOSE_CYCLE_SEC = 210;
 const CLOSE_WARN_SEC = 40;
 const CLOSE_PER_STEP = 2;
 const TARGET_HEADCOUNT = 32;
 
+
+const sfx = {
+  ctx: null,
+  click() {
+    try {
+      if (!this.ctx) {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        this.ctx = new AC();
+      }
+      if (this.ctx.state === 'suspended') this.ctx.resume();
+      const now = this.ctx.currentTime;
+      [0, 0.036].forEach((offset, idx) => {
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'triangle';
+        const baseFreq = idx === 0 ? 520 : 660;
+        osc.frequency.setValueAtTime(baseFreq, now + offset);
+        osc.frequency.exponentialRampToValueAtTime(baseFreq * 0.52, now + offset + 0.032);
+        gain.gain.setValueAtTime(0.001, now + offset);
+        gain.gain.linearRampToValueAtTime(0.14, now + offset + 0.004);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + offset + 0.036);
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start(now + offset);
+        osc.stop(now + offset + 0.04);
+      });
+    } catch (e) {}
+  },
+  loot() {
+    try {
+      if (!this.ctx) {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        this.ctx = new AC();
+      }
+      if (this.ctx.state === 'suspended') this.ctx.resume();
+      const now = this.ctx.currentTime;
+      [660, 880, 1174.66].forEach((freq, idx) => {
+        const t = now + idx * 0.055;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(freq, t);
+        gain.gain.setValueAtTime(0.001, t);
+        gain.gain.linearRampToValueAtTime(0.16, t + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.14);
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start(t);
+        osc.stop(t + 0.15);
+      });
+    } catch (e) {}
+  },
+  attack() {
+    try {
+      if (!this.ctx) {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        this.ctx = new AC();
+      }
+      if (this.ctx.state === 'suspended') this.ctx.resume();
+      const now = this.ctx.currentTime;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(340, now);
+      osc.frequency.exponentialRampToValueAtTime(120, now + 0.09);
+      gain.gain.setValueAtTime(0.001, now);
+      gain.gain.linearRampToValueAtTime(0.15, now + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.10);
+      osc.connect(gain);
+      gain.connect(this.ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.11);
+    } catch (e) {}
+  },
+  hurt() {
+    try {
+      if (!this.ctx) {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        this.ctx = new AC();
+      }
+      if (this.ctx.state === 'suspended') this.ctx.resume();
+      const now = this.ctx.currentTime;
+      [0, 0.05].forEach((off, i) => {
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(i === 0 ? 190 : 125, now + off);
+        osc.frequency.exponentialRampToValueAtTime(65, now + off + 0.08);
+        gain.gain.setValueAtTime(0.001, now + off);
+        gain.gain.linearRampToValueAtTime(0.16, now + off + 0.008);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + off + 0.09);
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start(now + off);
+        osc.stop(now + off + 0.1);
+      });
+    } catch (e) {}
+  },
+  flee() {
+    try {
+      if (!this.ctx) {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        this.ctx = new AC();
+      }
+      if (this.ctx.state === 'suspended') this.ctx.resume();
+      const now = this.ctx.currentTime;
+      [300, 420, 580].forEach((freq, i) => {
+        const t = now + i * 0.045;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, t);
+        osc.frequency.exponentialRampToValueAtTime(freq * 1.25, t + 0.06);
+        gain.gain.setValueAtTime(0.001, t);
+        gain.gain.linearRampToValueAtTime(0.13, t + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.07);
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start(t);
+        osc.stop(t + 0.08);
+      });
+    } catch (e) {}
+  },
+  death() {
+    try {
+      if (!this.ctx) {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        this.ctx = new AC();
+      }
+      if (this.ctx.state === 'suspended') this.ctx.resume();
+      const now = this.ctx.currentTime;
+      [240, 185, 135, 85].forEach((freq, idx) => {
+        const t = now + idx * 0.11;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(freq, t);
+        osc.frequency.exponentialRampToValueAtTime(freq * 0.65, t + 0.14);
+        gain.gain.setValueAtTime(0.001, t);
+        gain.gain.linearRampToValueAtTime(0.18, t + 0.015);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.16);
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start(t);
+        osc.stop(t + 0.17);
+      });
+    } catch (e) {}
+  },
+  beep() {
+    try {
+      if (!this.ctx) {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        this.ctx = new AC();
+      }
+      if (this.ctx.state === 'suspended') this.ctx.resume();
+      const now = this.ctx.currentTime;
+      // '삐삐삐' 3연속 경보/속보 사운드
+      [0, 0.11, 0.22].forEach((off) => {
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(980, now + off);
+        gain.gain.setValueAtTime(0.001, now + off);
+        gain.gain.linearRampToValueAtTime(0.11, now + off + 0.008);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + off + 0.075);
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start(now + off);
+        osc.stop(now + off + 0.08);
+      });
+    } catch (e) {}
+  }
+};
+
+document.addEventListener('pointerdown', (e) => {
+  if (e.target && e.target.closest('button')) {
+    sfx.click();
+  }
+}, true);
+
 const bgm = {
-  ctx: null, enabled: true, playing: false, timer: null, step: 0,
-  notes: [220.00, 261.63, 329.63, 392.00, 329.63, 261.63, 196.00, 246.94],
+  ctx: null, enabled: true, playing: false, timer: null, step: 0, mode: 'lobby', volumeScale: 0.75,
+  tracks: {
+    lobby: {
+      tempo: 460, wave: 'triangle', vol: 0.032, dur: 0.42,
+      notes: [220.00, 261.63, 329.63, 392.00, 329.63, 261.63, 196.00, 246.94]
+    },
+    /* 아침/낮 인게임 BGM: 나른하고 잔잔한 칩튠 멜로디 */
+    day: {
+      tempo: 540, wave: 'sine', vol: 0.036, dur: 0.50,
+      notes: [
+        261.63, 0, 329.63, 293.66, 246.94, 0, 261.63, 0,
+        220.00, 0, 261.63, 246.94, 196.00, 0, 220.00, 0,
+        261.63, 0, 329.63, 392.00, 329.63, 293.66, 261.63, 0
+      ],
+      bass: [130.81, 130.81, 123.47, 123.47, 110.00, 110.00, 98.00, 98.00]
+    },
+    /* 2번 오디오 기반: 밤 인게임 BGM (차분하고 긴장감 있는 야간 칩튠) */
+    night: {
+      tempo: 480, wave: 'triangle', vol: 0.034, dur: 0.44,
+      notes: [
+        220.00, 0, 261.63, 246.94, 196.00, 0, 174.61, 196.00,
+        220.00, 0, 246.94, 261.63, 293.66, 261.63, 246.94, 196.00,
+        164.81, 0, 196.00, 174.61, 146.83, 0, 164.81, 130.81
+      ],
+      bass: [110.00, 110.00, 98.00, 87.31, 110.00, 110.00, 82.41, 73.42]
+    }
+  },
   ensureCtx() {
     if (!this.ctx) {
       const AC = window.AudioContext || window.webkitAudioContext;
@@ -862,26 +1107,56 @@ const bgm = {
   },
   playStep() {
     if (!this.enabled || !this.playing || !this.ctx) return;
+    const tr = this.tracks[this.mode] || this.tracks.lobby;
     const now = this.ctx.currentTime;
-    const freq = this.notes[this.step % this.notes.length];
+    const idx = this.step;
     this.step++;
-    const osc = this.ctx.createOscillator();
-    const gain = this.ctx.createGain();
-    osc.type = 'triangle';
-    osc.frequency.setValueAtTime(freq, now);
-    gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.linearRampToValueAtTime(0.032, now + 0.04);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.42);
-    osc.connect(gain); gain.connect(this.ctx.destination);
-    osc.start(now); osc.stop(now + 0.44);
+    const freq = tr.notes[idx % tr.notes.length];
+    if (freq > 0) {
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = tr.wave;
+      osc.frequency.setValueAtTime(freq, now);
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.linearRampToValueAtTime(tr.vol * (this.volumeScale ?? 0.75), now + 0.025);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + tr.dur);
+      osc.connect(gain); gain.connect(this.ctx.destination);
+      osc.start(now); osc.stop(now + tr.dur + 0.02);
+    }
+    if (tr.bass && idx % 2 === 0) {
+      const bFreq = tr.bass[Math.floor(idx / 2) % tr.bass.length];
+      if (bFreq > 0) {
+        const bOsc = this.ctx.createOscillator();
+        const bGain = this.ctx.createGain();
+        bOsc.type = 'sine';
+        bOsc.frequency.setValueAtTime(bFreq, now);
+        bGain.gain.setValueAtTime(0.0001, now);
+        bGain.gain.linearRampToValueAtTime(tr.vol * 0.85, now + 0.03);
+        bGain.gain.exponentialRampToValueAtTime(0.0001, now + tr.dur * 1.4);
+        bOsc.connect(bGain); bGain.connect(this.ctx.destination);
+        bOsc.start(now); bOsc.stop(now + tr.dur * 1.45);
+      }
+    }
   },
-  start() {
+  setMode(nextMode) {
+    if (this.mode === nextMode && this.playing) return;
+    this.mode = nextMode;
+    this.step = 0;
+    if (this.playing) {
+      if (this.timer) { clearInterval(this.timer); this.timer = null; }
+      this.playing = false;
+      this.start(nextMode);
+    }
+  },
+  start(forceMode = null) {
+    if (forceMode) this.mode = forceMode;
     if (!this.enabled) return;
     this.ensureCtx();
     if (this.playing) return;
+    const tr = this.tracks[this.mode] || this.tracks.lobby;
     this.playing = true;
     this.playStep();
-    this.timer = setInterval(() => this.playStep(), 460);
+    this.timer = setInterval(() => this.playStep(), tr.tempo);
   },
   stop() {
     this.playing = false;
@@ -891,13 +1166,33 @@ const bgm = {
 
 document.addEventListener('pointerdown', () => {
   const cur = document.querySelector('.view.active');
-  if (cur && cur.id !== 'viewGame') bgm.start();
+  if (!cur) return;
+  if (cur.id === 'viewGame') {
+    const h = Math.floor((play.minutes % 1440) / 60);
+    bgm.start((h >= 6 && h < 18) ? 'day' : 'night');
+  } else {
+    bgm.start('lobby');
+  }
 }, { once: false });
+
+
+function setBgmVolume(val) {
+  const num = Math.max(0, Math.min(100, Number(val) || 0));
+  bgm.volumeScale = num / 100;
+  const lSl = document.getElementById('lobbyBgmVol');
+  const gSl = document.getElementById('gameBgmVol');
+  const lTx = document.getElementById('lobbyBgmVolTxt');
+  if (lSl) lSl.value = String(num);
+  if (gSl) gSl.value = String(num);
+  if (lTx) lTx.textContent = `${num}%`;
+}
 
 function toggleBgm() {
   bgm.enabled = !bgm.enabled;
   const btn = document.getElementById('btnBgmToggle');
+  const gBtn = document.getElementById('refBgmBtn');
   if (btn) btn.textContent = `BGM: ${bgm.enabled ? 'ON' : 'OFF'}`;
+  if (gBtn) gBtn.style.opacity = bgm.enabled ? '1' : '0.45';
   if (bgm.enabled) bgm.start();
   else bgm.stop();
 }
@@ -927,38 +1222,441 @@ const STARTER_WEAPONS = [
 const TITLES = ['없음', '생존자', '밤의 목격자', '동맹의 맹세', '최후의 이름'];
 
 const ISLAND_ZONES = [
-  { id: 'lighthouse', name: '등대', x: 112, y: 66, edges: ['cliff', 'forest', 'west_coast'], pool: ['붕대', '빵', '우산'], hint: '등대 주변에선 붕대와 식량이 종종 발견된다.' },
-  { id: 'cliff', name: '절벽', x: 215, y: 48, edges: ['lighthouse', 'sea_cave', 'old_school'], pool: ['사냥 활', '단검', '빵'], hint: '절벽 바람이 세지만 무기류가 눈에 띈다.' },
-  { id: 'sea_cave', name: '해안동굴', x: 318, y: 52, edges: ['cliff', 'pier'], pool: ['해독제', '단검', '붕대'], hint: '습한 동굴엔 해독제나 날붙이가 떨어진다.' },
-  { id: 'pier', name: '선착장', x: 382, y: 82, edges: ['sea_cave', 'dorm', 'power'], pool: ['빵', '우산', '단검'], hint: '선착장 화물 더미엔 식량과 잡동사니가 많다.' },
-  { id: 'west_coast', name: '서쪽 해변', x: 78, y: 112, edges: ['lighthouse', 'marsh'], pool: ['붕대', '빵', '우산'], hint: '서쪽 해변은 조용하지만 물자가 흩어져 있다.' },
-  { id: 'forest', name: '숲', x: 138, y: 102, edges: ['lighthouse', 'old_school', 'greenhouse'], pool: ['사냥 활', '붕대', '해독제'], hint: '숲 속엔 약초·해독제와 활감이 있다.' },
-  { id: 'old_school', name: '폐교', x: 216, y: 104, edges: ['cliff', 'forest', 'dorm', 'downtown'], pool: ['붕대', '빵', '우산', '단검'], hint: '폐교 복도와 교실엔 기본 보급품이 골고루 있다.' },
-  { id: 'dorm', name: '기숙사', x: 292, y: 106, edges: ['old_school', 'pier', 'downtown'], pool: ['빵', '구급 상자', '우산'], hint: '기숙사 방마다 식량과 구급용품이 남아 있다.' },
-  { id: 'marsh', name: '습지', x: 105, y: 152, edges: ['west_coast', 'tomb', 'greenhouse'], pool: ['해독제', '붕대', '단검'], hint: '습지는 발이 빠지고 중독 위험이 있으니 해독제를 챙기자.' },
-  { id: 'greenhouse', name: '온실', x: 174, y: 146, edges: ['forest', 'marsh', 'downtown', 'ruins'], pool: ['빵', '구급 상자', '해독제'], hint: '온실엔 식량과 치료제가 잘 나온다.' },
-  { id: 'downtown', name: '상점가', x: 246, y: 144, edges: ['old_school', 'dorm', 'greenhouse', 'clinic', 'reservoir', 'shrine'], pool: ['빵', '빵', '구급 상자', '단검'], hint: '상점가는 식량과 보급품이 풍부하지만 사람이 많다.' },
-  { id: 'clinic', name: '진료소', x: 306, y: 152, edges: ['downtown', 'power'], pool: ['붕대', '구급 상자', '해독제'], hint: '진료소는 붕대·구급상자·해독제 핵심 거점이다.' },
-  { id: 'power', name: '발전소', x: 374, y: 132, edges: ['pier', 'clinic', 'lab'], pool: ['단검', '사냥 활', '구급 상자'], hint: '발전소 주변엔 날카로운 공구와 장비가 있다.' },
-  { id: 'tomb', name: '묘지', x: 76, y: 186, edges: ['marsh', 'pine_forest'], pool: ['해독제', '붕대', '단검'], hint: '묘지엔 기묘한 약품과 낡은 날붙이가 남는다.' },
-  { id: 'ruins', name: '폐공장', x: 162, y: 184, edges: ['greenhouse', 'pine_forest', 'reservoir'], pool: ['단검', '사냥 활', '빵'], hint: '폐공장엔 무기와 거친 물자가 많다.' },
-  { id: 'reservoir', name: '저수지', x: 222, y: 174, edges: ['downtown', 'ruins', 'shrine', 'south_coast'], pool: ['빵', '붕대', '해독제'], hint: '저수지 근처에선 식량과 치료 물자를 줍기 쉽다.' },
-  { id: 'shrine', name: '신사', x: 282, y: 182, edges: ['downtown', 'reservoir', 'warehouse'], pool: ['구급 상자', '붕대', '우산'], hint: '신사 경내엔 구급 물자와 정갈한 물건이 있다.' },
-  { id: 'lab', name: '연구소', x: 356, y: 180, edges: ['power', 'warehouse'], pool: ['구급 상자', '해독제', '사냥 활'], hint: '연구실엔 특수 약품과 장비가 섞여 있다.' },
-  { id: 'pine_forest', name: '잣나무숲', x: 118, y: 214, edges: ['tomb', 'ruins', 'fishing_village'], pool: ['사냥 활', '빵', '붕대'], hint: '잣나무숲은 활과 식량을 찾기 좋다.' },
-  { id: 'fishing_village', name: '어촌', x: 164, y: 216, edges: ['pine_forest', 'south_coast'], pool: ['빵', '단검', '붕대'], hint: '어촌엔 건어물·빵과 칼류가 종종 나온다.' },
-  { id: 'south_coast', name: '남쪽 해변', x: 224, y: 216, edges: ['reservoir', 'fishing_village', 'warehouse'], pool: ['빵', '우산', '붕대'], hint: '남쪽 해변은 시야가 트여 있어 움직이기 편하다.' },
-  { id: 'warehouse', name: '창고', x: 318, y: 210, edges: ['shrine', 'lab', 'south_coast'], pool: ['빵', '구급 상자', '단검', '사냥 활'], hint: '창고엔 각종 보급품이 가득 쌓여 있다.' }
+  { id: 'lighthouse', name: '등대', x: 112, y: 66, edges: ['cliff', 'forest', 'west_coast'], pool: ["붕대", "빵", "우산", "손전등", "★ 조명탄", "★ 쌍안경"], hint: '등대 주변에선 붕대와 식량이 종종 발견된다.' },
+  { id: 'cliff', name: '절벽', x: 215, y: 48, edges: ['lighthouse', 'sea_cave', 'old_school'], pool: ["사냥 활", "단검", "돌멩이", "곡괭이", "★ 화살 묶음", "★ 쌍안경"], hint: '절벽 바람이 세지만 무기류가 눈에 띈다.' },
+  { id: 'sea_cave', name: '해안동굴', x: 318, y: 52, edges: ['cliff', 'pier'], pool: ["해독제", "단검", "붕대", "손전등", "돌멩이", "★ 바람총"], hint: '습한 동굴엔 해독제나 날붙이가 떨어진다.' },
+  { id: 'pier', name: '선착장', x: 382, y: 82, edges: ['sea_cave', 'dorm', 'power'], pool: ["빵", "우산", "단검", "멜론빵", "★ 낚싯대", "★ 조명탄"], hint: '선착장 화물 더미엔 식량과 잡동사니가 많다.' },
+  { id: 'west_coast', name: '서쪽 해변', x: 78, y: 112, edges: ['lighthouse', 'marsh'], pool: ["붕대", "빵", "우산", "손전등", "사과", "★ 낚싯대"], hint: '서쪽 해변은 조용하지만 물자가 흩어져 있다.' },
+  { id: 'forest', name: '숲', x: 138, y: 102, edges: ['lighthouse', 'old_school', 'greenhouse'], pool: ["사냥 활", "붕대", "해독제", "새총", "야생 열매", "★ 화살 묶음"], hint: '숲 속엔 약초·해독제와 활감이 있다.' },
+  { id: 'old_school', name: '폐교', x: 216, y: 104, edges: ['cliff', 'forest', 'dorm', 'downtown'], pool: ["★ 목검", "★ 바람총", "국어사전", "대걸레", "리코더", "제도용 컴퍼스", "커터칼", "펜싱 마스크", "반창고", "붕대", "소독약", "멜론빵", "빵", "★ 배낭"], hint: '폐교 복도와 교실엔 기본 보급품이 골고루 있다.' },
+  { id: 'dorm', name: '기숙사', x: 292, y: 106, edges: ['old_school', 'pier', 'downtown'], pool: ["빵", "멜론빵", "초콜릿", "우산", "진통제", "★ 구급 상자", "★ 배낭"], hint: '기숙사 방마다 식량과 구급용품이 남아 있다.' },
+  { id: 'marsh', name: '습지', x: 105, y: 152, edges: ['west_coast', 'tomb', 'greenhouse'], pool: ["해독제", "붕대", "단검", "야생 열매", "지뢰", "★ 바람총"], hint: '습지는 발이 빠지고 중독 위험이 있으니 해독제를 챙기자.' },
+  { id: 'greenhouse', name: '온실', x: 174, y: 146, edges: ['forest', 'marsh', 'downtown', 'ruins'], pool: ["사과", "야생 열매", "해독제", "가위", "★ 구급 상자"], hint: '온실엔 식량과 치료제가 잘 나온다.' },
+  { id: 'downtown', name: '상점가', x: 246, y: 144, edges: ['old_school', 'dorm', 'greenhouse', 'clinic', 'reservoir', 'shrine'], pool: ["빵", "멜론빵", "초콜릿", "주먹밥", "단검", "에너지 드링크", "★ 배낭"], hint: '상점가는 식량과 보급품이 풍부하지만 사람이 많다.' },
+  { id: 'clinic', name: '진료소', x: 306, y: 152, edges: ['downtown', 'power'], pool: ["반창고", "소독약", "붕대", "해독제", "진통제", "가위", "★ 구급 상자"], hint: '진료소는 붕대·구급상자·해독제 핵심 거점이다.' },
+  { id: 'power', name: '발전소', x: 374, y: 132, edges: ['pier', 'clinic', 'lab'], pool: ["단검", "쇠파이프", "곡괭이", "숫돌", "손전등", "지뢰", "★ 소방도끼"], hint: '발전소 주변엔 날카로운 공구와 장비가 있다.' },
+  { id: 'tomb', name: '묘지', x: 76, y: 186, edges: ['marsh', 'pine_forest'], pool: ["해독제", "붕대", "단검", "곡괭이", "숫돌", "★ 일본도 모형"], hint: '묘지엔 기묘한 약품과 낡은 날붙이가 남는다.' },
+  { id: 'ruins', name: '폐공장', x: 162, y: 184, edges: ['greenhouse', 'pine_forest', 'reservoir'], pool: ["단검", "쇠파이프", "곡괭이", "지뢰", "숫돌", "★ 방탄 조끼"], hint: '폐공장엔 무기와 거친 물자가 많다.' },
+  { id: 'reservoir', name: '저수지', x: 222, y: 174, edges: ['downtown', 'ruins', 'shrine', 'south_coast'], pool: ["빵", "주먹밥", "붕대", "해독제", "★ 낚싯대", "★ 화살 묶음"], hint: '저수지 근처에선 식량과 치료 물자를 줍기 쉽다.' },
+  { id: 'shrine', name: '신사', x: 282, y: 182, edges: ['downtown', 'reservoir', 'warehouse'], pool: ["반창고", "붕대", "우산", "★ 목검", "★ 일본도 모형", "★ 구급 상자"], hint: '신사 경내엔 구급 물자와 정갈한 물건이 있다.' },
+  { id: 'lab', name: '연구소', x: 356, y: 180, edges: ['power', 'warehouse'], pool: ["해독제", "진통제", "에너지 드링크", "★ 구급 상자", "★ 석궁", "★ 방탄 조끼"], hint: '연구실엔 특수 약품과 장비가 섞여 있다.' },
+  { id: 'pine_forest', name: '잣나무숲', x: 118, y: 214, edges: ['tomb', 'ruins', 'fishing_village'], pool: ["사냥 활", "새총", "야생 열매", "사과", "★ 화살 묶음", "★ 석궁"], hint: '잣나무숲은 활과 식량을 찾기 좋다.' },
+  { id: 'fishing_village', name: '어촌', x: 164, y: 216, edges: ['pine_forest', 'south_coast'], pool: ["주먹밥", "식칼", "낫", "붕대", "★ 낚싯대"], hint: '어촌엔 건어물·빵과 칼류가 종종 나온다.' },
+  { id: 'south_coast', name: '남쪽 해변', x: 224, y: 216, edges: ['reservoir', 'fishing_village', 'warehouse'], pool: ["빵", "사과", "우산", "붕대", "★ 낚싯대", "★ 쌍안경"], hint: '남쪽 해변은 시야가 트여 있어 움직이기 편하다.' },
+  { id: 'warehouse', name: '창고', x: 318, y: 210, edges: ['shrine', 'lab', 'south_coast'], pool: ["빵", "주먹밥", "단검", "낫", "지뢰", "★ 배낭", "★ 비상 전투식량", "★ 소방도끼"], hint: '창고엔 각종 보급품이 가득 쌓여 있다.' }
 ];
 
 const LOOT_ITEMS = [
-  { name: '빵', type: 'food', val: 28, desc: '허기 +28 · 굶주림 완화' },
-  { name: '붕대', type: 'heal', val: 3, cures: ['출혈'], desc: 'HP +3 · 출혈 치료' },
-  { name: '해독제', type: 'heal', val: 2, cures: ['중독'], desc: 'HP +2 · 중독 치료' },
-  { name: '구급 상자', type: 'heal', val: 6, cures: ['출혈', '중독', '부상'], desc: 'HP +6 · 출혈/중독/부상 치료' },
-  { name: '우산', type: 'weapon', atk: 3, kind: '근접', dura: 6, maxDura: 6, desc: '공격력 3, 근접, 내구 6/6' },
-  { name: '단검', type: 'weapon', atk: 5, kind: '날붙이', dura: 8, maxDura: 8, desc: '공격력 5, 날붙이, 내구 8/8' },
-  { name: '사냥 활', type: 'weapon', atk: 6, kind: '원거리', dura: 7, maxDura: 7, desc: '공격력 6, 원거리, 내구 7/7' }
+  {
+    "name": "우산",
+    "type": "weapon",
+    "atk": 3,
+    "kind": "근접",
+    "dura": 6,
+    "maxDura": 6,
+    "rare": false,
+    "desc": "공격력 3 (근접) · 내구 6/6"
+  },
+  {
+    "name": "대걸레",
+    "type": "weapon",
+    "atk": 3,
+    "kind": "근접",
+    "dura": 5,
+    "maxDura": 5,
+    "rare": false,
+    "desc": "공격력 3 (근접) · 내구 5/5"
+  },
+  {
+    "name": "리코더",
+    "type": "weapon",
+    "atk": 2,
+    "kind": "근접",
+    "dura": 4,
+    "maxDura": 4,
+    "rare": false,
+    "desc": "공격력 2 (근접) · 내구 4/4"
+  },
+  {
+    "name": "국어사전",
+    "type": "weapon",
+    "atk": 3,
+    "kind": "근접",
+    "dura": 7,
+    "maxDura": 7,
+    "rare": false,
+    "desc": "공격력 3 (근접) · 둔탁한 타격 · 내구 7/7"
+  },
+  {
+    "name": "프라이팬",
+    "type": "weapon",
+    "atk": 4,
+    "kind": "근접",
+    "dura": 8,
+    "maxDura": 8,
+    "rare": false,
+    "desc": "공격력 4 (근접) · 내구 8/8"
+  },
+  {
+    "name": "쇠파이프",
+    "type": "weapon",
+    "atk": 5,
+    "kind": "근접",
+    "dura": 5,
+    "maxDura": 5,
+    "rare": false,
+    "desc": "공격력 5 (근접) · 내구 5/5"
+  },
+  {
+    "name": "야구배트",
+    "type": "weapon",
+    "atk": 5,
+    "kind": "근접",
+    "dura": 6,
+    "maxDura": 6,
+    "rare": false,
+    "desc": "공격력 5 (근접) · 내구 6/6"
+  },
+  {
+    "name": "곡괭이",
+    "type": "weapon",
+    "atk": 5,
+    "kind": "근접",
+    "dura": 10,
+    "maxDura": 10,
+    "rare": false,
+    "desc": "공격력 5 (근접) · 내구 10/10"
+  },
+  {
+    "name": "★ 목검",
+    "type": "weapon",
+    "atk": 6,
+    "kind": "근접",
+    "dura": 8,
+    "maxDura": 8,
+    "rare": true,
+    "desc": "★ 희귀 · 공격력 6 (근접) · 내구 8/8"
+  },
+  {
+    "name": "★ 소방도끼",
+    "type": "weapon",
+    "atk": 7,
+    "kind": "근접",
+    "dura": 6,
+    "maxDura": 6,
+    "rare": true,
+    "desc": "★ 희귀 · 공격력 7 (근접) · 내구 6/6"
+  },
+  {
+    "name": "커터칼",
+    "type": "weapon",
+    "atk": 4,
+    "kind": "날붙이",
+    "dura": 6,
+    "maxDura": 6,
+    "rare": false,
+    "desc": "공격력 4 (날붙이) · 내구 6/6"
+  },
+  {
+    "name": "가위",
+    "type": "weapon",
+    "atk": 4,
+    "kind": "날붙이",
+    "dura": 6,
+    "maxDura": 6,
+    "rare": false,
+    "desc": "공격력 4 (날붙이) · 내구 6/6"
+  },
+  {
+    "name": "제도용 컴퍼스",
+    "type": "weapon",
+    "atk": 3,
+    "kind": "날붙이",
+    "dura": 5,
+    "maxDura": 5,
+    "rare": false,
+    "desc": "공격력 3 (날붙이) · 내구 5/5"
+  },
+  {
+    "name": "단검",
+    "type": "weapon",
+    "atk": 5,
+    "kind": "날붙이",
+    "dura": 8,
+    "maxDura": 8,
+    "rare": false,
+    "desc": "공격력 5 (날붙이) · 내구 8/8"
+  },
+  {
+    "name": "식칼",
+    "type": "weapon",
+    "atk": 6,
+    "kind": "날붙이",
+    "dura": 6,
+    "maxDura": 6,
+    "rare": false,
+    "desc": "공격력 6 (날붙이) · 내구 6/6"
+  },
+  {
+    "name": "낫",
+    "type": "weapon",
+    "atk": 6,
+    "kind": "날붙이",
+    "dura": 7,
+    "maxDura": 7,
+    "rare": false,
+    "desc": "공격력 6 (날붙이) · 내구 7/7"
+  },
+  {
+    "name": "★ 일본도 모형",
+    "type": "weapon",
+    "atk": 8,
+    "kind": "날붙이",
+    "dura": 6,
+    "maxDura": 6,
+    "rare": true,
+    "desc": "★ 희귀 · 공격력 8 (날붙이) · 내구 6/6"
+  },
+  {
+    "name": "돌멩이",
+    "type": "weapon",
+    "atk": 2,
+    "kind": "원거리",
+    "dura": 3,
+    "maxDura": 3,
+    "rare": false,
+    "desc": "공격력 2 (원거리) · 3회 사용"
+  },
+  {
+    "name": "새총",
+    "type": "weapon",
+    "atk": 4,
+    "kind": "원거리",
+    "dura": 8,
+    "maxDura": 8,
+    "rare": false,
+    "desc": "공격력 4 (원거리) · 내구 8/8"
+  },
+  {
+    "name": "사냥 활",
+    "type": "weapon",
+    "atk": 6,
+    "kind": "원거리",
+    "dura": 7,
+    "maxDura": 7,
+    "rare": false,
+    "desc": "공격력 6 (원거리) · 내구 7/7"
+  },
+  {
+    "name": "★ 바람총",
+    "type": "weapon",
+    "atk": 6,
+    "kind": "원거리",
+    "dura": 5,
+    "maxDura": 5,
+    "rare": true,
+    "desc": "★ 희귀 · 공격력 6 (원거리) · 내구 5/5"
+  },
+  {
+    "name": "★ 조명탄",
+    "type": "weapon",
+    "atk": 7,
+    "kind": "원거리",
+    "dura": 2,
+    "maxDura": 2,
+    "rare": true,
+    "desc": "★ 희귀 · 공격력 7 (원거리) · 2회 사용"
+  },
+  {
+    "name": "★ 석궁",
+    "type": "weapon",
+    "atk": 8,
+    "kind": "원거리",
+    "dura": 5,
+    "maxDura": 5,
+    "rare": true,
+    "desc": "★ 희귀 · 공격력 8 (원거리) · 내구 5/5"
+  },
+  {
+    "name": "★ 화살 묶음",
+    "type": "repair",
+    "val": 5,
+    "rare": true,
+    "desc": "★ 희귀 · 장착 무기 내구 +5 보충"
+  },
+  {
+    "name": "숫돌",
+    "type": "repair",
+    "val": 3,
+    "rare": false,
+    "desc": "장착 무기 내구 +3 수리"
+  },
+  {
+    "name": "펜싱 마스크",
+    "type": "armor",
+    "shield": 2,
+    "rare": false,
+    "desc": "착용 시 피격 피해 1 경감 (보호 2)"
+  },
+  {
+    "name": "★ 방탄 조끼",
+    "type": "armor",
+    "shield": 4,
+    "rare": true,
+    "desc": "★ 희귀 · 착용 시 피격 피해 경감 (보호 4)"
+  },
+  {
+    "name": "반창고",
+    "type": "heal",
+    "val": 2,
+    "cures": [],
+    "rare": false,
+    "desc": "HP +2 · 가벼운 상처 회복"
+  },
+  {
+    "name": "소독약",
+    "type": "heal",
+    "val": 2,
+    "cures": [
+      "출혈"
+    ],
+    "rare": false,
+    "desc": "HP +2 · 출혈 치료"
+  },
+  {
+    "name": "붕대",
+    "type": "heal",
+    "val": 3,
+    "cures": [
+      "출혈"
+    ],
+    "rare": false,
+    "desc": "HP +3 · 출혈 치료"
+  },
+  {
+    "name": "해독제",
+    "type": "heal",
+    "val": 2,
+    "cures": [
+      "중독"
+    ],
+    "rare": false,
+    "desc": "HP +2 · 중독 치료"
+  },
+  {
+    "name": "진통제",
+    "type": "heal",
+    "val": 3,
+    "cures": [
+      "부상"
+    ],
+    "rare": false,
+    "desc": "HP +3 · 부상 치료"
+  },
+  {
+    "name": "에너지 드링크",
+    "type": "heal",
+    "val": 1,
+    "cures": [
+      "피로"
+    ],
+    "rare": false,
+    "desc": "HP +1 · 피로 즉시 해제"
+  },
+  {
+    "name": "★ 구급 상자",
+    "type": "heal",
+    "val": 6,
+    "cures": [
+      "출혈",
+      "중독",
+      "부상"
+    ],
+    "rare": true,
+    "desc": "★ 희귀 · HP +6 · 출혈/중독/부상 치료"
+  },
+  {
+    "name": "사과",
+    "type": "food",
+    "val": 16,
+    "rare": false,
+    "desc": "허기 +16"
+  },
+  {
+    "name": "야생 열매",
+    "type": "food",
+    "val": 15,
+    "rare": false,
+    "desc": "허기 +15"
+  },
+  {
+    "name": "초콜릿",
+    "type": "food",
+    "val": 18,
+    "rare": false,
+    "desc": "허기 +18"
+  },
+  {
+    "name": "멜론빵",
+    "type": "food",
+    "val": 26,
+    "rare": false,
+    "desc": "허기 +26"
+  },
+  {
+    "name": "빵",
+    "type": "food",
+    "val": 28,
+    "rare": false,
+    "desc": "허기 +28 · 굶주림 완화"
+  },
+  {
+    "name": "주먹밥",
+    "type": "food",
+    "val": 32,
+    "rare": false,
+    "desc": "허기 +32"
+  },
+  {
+    "name": "★ 비상 전투식량",
+    "type": "food",
+    "val": 45,
+    "rare": true,
+    "desc": "★ 희귀 · 허기 +45 · 굶주림/피로 완화"
+  },
+  {
+    "name": "손전등",
+    "type": "gear",
+    "rare": false,
+    "desc": "밤 시간대 탐색 가능 · 야간 시야 확보"
+  },
+  {
+    "name": "★ 배낭",
+    "type": "bag_expand",
+    "addSlots": 2,
+    "rare": true,
+    "desc": "★ 희귀 · 가방 최대 칸 +2 확장"
+  },
+  {
+    "name": "지뢰",
+    "type": "mine",
+    "dmg": 3,
+    "rare": false,
+    "desc": "설치 시 구역 매설 (본인·동료 제외 밟으면 HP -3)"
+  },
+  {
+    "name": "★ 낚싯대",
+    "type": "fishing",
+    "uses": 5,
+    "rare": true,
+    "desc": "★ 희귀 · 해변/저수지/어촌에서 물고기 획득 (5회)"
+  },
+  {
+    "name": "★ 쌍안경",
+    "type": "binocular",
+    "rare": true,
+    "desc": "★ 희귀 · 인접 구역 생존자 위치 정찰"
+  }
 ];
 
 const NPC_ROSTER = [
@@ -1051,6 +1749,8 @@ let draft = {
 let affinityMap = {};
 let watchOvernight = false;
 let npcAlliances = [];
+let plantedMines = [];
+let zoneDroppedItems = {}; // { [zoneId]: [item, ...] }
 
 let modalState = {
   mode: null,
@@ -1113,14 +1813,17 @@ function showView(id) {
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   document.getElementById(id).classList.add('active');
   if (id === 'viewGame') {
-    bgm.stop();
+    const h = Math.floor((play.minutes % 1440) / 60);
+    bgm.setMode((h >= 6 && h < 18) ? 'day' : 'night');
+    bgm.start();
     drawIslandMap();
   } else if (bgm.enabled && bgm.ctx) {
+    bgm.setMode('lobby');
     bgm.start();
   }
 }
 
-const SAVED_ID_KEY = 'seijinshiki_saved_id';
+const SAVED_ID_KEY = 'yeoninsiki_saved_id';
 
 function openAuthView(m) {
   authMode = m;
@@ -1192,9 +1895,10 @@ function getAffinityPoints(name) {
   if (affinityPointsMap[name] === undefined) {
     const c = getPickedChar();
     const npc = NPC_ROSTER.find(n => n.name === name);
-    let pts = 18;
-    if (c && npc && c.club === npc.club) pts += 8;
-    if (c && c.club === '천문부') pts += 8;
+    // 다른 동아리는 0하트(8pt) 시작, 같은 동아리는 기본 하트 1개(24pt)에서 시작!
+    let pts = 8;
+    if (c && npc && c.club === npc.club) pts = 24;
+    if (c && c.club === '천문부' && (!npc || c.club !== npc.club)) pts += 4;
     affinityPointsMap[name] = Math.min(100, Math.max(0, pts));
   }
   return affinityPointsMap[name];
@@ -1202,7 +1906,7 @@ function getAffinityPoints(name) {
 
 function getAffinity(name) {
   const pts = getAffinityPoints(name);
-  const hearts = Math.min(5, Math.max(0, Math.floor(pts / 20)));
+  const hearts = Math.min(5, Math.max(0, Math.floor(pts / 22)));
   affinityMap[name] = hearts;
   return hearts;
 }
@@ -1213,6 +1917,256 @@ function gainAffinityPoints(name, delta) {
   affinityPointsMap[name] = next;
   const h = getAffinity(name);
   return { prevPts: cur, nextPts: next, hearts: h };
+}
+
+
+const TRAIT_LINES_5X3 = {
+  "호전적": {
+    "food": [
+      "오, 먹을 거냐? 전투 전에 배 채워 두는 건 나쁘지 않지.",
+      "생각보다 센스 있네. 힘내서 싸우라는 뜻인가?",
+      "식량 챙겨 주는 놈 치고 약한 놈은 드물지. 고맙게 먹는다.",
+      "배고픈 상태로 칼 휘두르는 건 성미에 안 맞았거든. 잘 먹겠어.",
+      "이거 먹고 기세 올리면 웬만한 놈은 한 방이지!"
+    ],
+    "weapon": [
+      "호오, 나한테 이걸 넘긴다고? 쓸 줄 아는 녀석이네.",
+      "손에 착 감기는군. 이 무기라면 앞길 막는 놈들쯤이야.",
+      "무기 하나 더 챙기니까 배짱이 더 두둑해지는데?",
+      "고맙다. 대신 네 뒤를 노리는 놈이 있으면 먼저 베어 주지.",
+      "자신감 하나는 인정해 줄게. 제대로 써먹어 주마."
+    ],
+    "rescue": [
+      "크윽… 타이밍 딱 맞춰 들어왔네! 빚졌다고는 안 하지만, 나쁘지 않았어.",
+      "네가 끼어들 줄은 몰랐는데… 꽤 배짱이 있잖아?",
+      "덕분에 목숨 건졌네. 다음엔 내가 네 앞을 막아 서 주지!",
+      "비겁하게 몰아붙이던 놈들, 제대로 혼쭐났군. 고맙다.",
+      "…방금 구해 준 건 인정한다. 같이 살아남을 자격이 있네."
+    ]
+  },
+  "겁쟁이": {
+    "food": [
+      "으, 응… 먹을 걸 주다니, 나쁜 사람은 아닌 거지? 고마워…",
+      "배가 너무 고파서 손이 떨렸는데… 정말 고마워…",
+      "조금만 나눠 먹어도 마음이 한결 놓이는 것 같아…",
+      "독 같은 건… 아니지? 네 눈빛을 믿어 볼게…",
+      "숨어서 떨기만 하던 나한테 이렇게 챙겨 주다니… 고마워…"
+    ],
+    "weapon": [
+      "우와… 이거 나한테 줘도 돼? 무섭지만… 들고 있으면 덜 떨릴 것 같아…",
+      "무기 같은 건 잘 못 쓰는데… 그래도 지켜야 할 때가 오면 써 볼게…",
+      "네가 챙겨 준 거니까, 소중히 꼭 쥐고 있을게…",
+      "갑자기 무서운 사람이 나타나도 이거면 조금은 버틸 수 있겠지…?",
+      "고마워… 혹시 위험해지면 나도 힘껏 휘둘러 볼게…"
+    ],
+    "rescue": [
+      "흑…! 정말 끝났다고 생각했는데… 구해 줘서 고마워, 진짜 고마워…!",
+      "무서워서 움직일 수도 없었는데… 네가 나타나 줘서 살았어…",
+      "심장이 아직도 쿵쾅거려… 네가 아니었으면 난 벌써…",
+      "나 같은 겁쟁이를 위해 위험을 무릅써 주다니… 절대 안 잊을게…",
+      "이제 혼자 남겨져도… 네가 구해 줬다는 기억 덕분에 조금은 용기가 나…"
+    ]
+  },
+  "기회주의": {
+    "food": [
+      "어라, 공짜 식량인가? 일단 감사히 받아 두지.",
+      "당장 허기를 때울 수 있다면 마다할 이유가 없지.",
+      "뭔가 노림수가 있는 건가 싶다가도… 배고픈 건 못 참겠네.",
+      "거래 조건이라도 걸 줄 알았는데 순순히 내놓네. 나쁘지 않아.",
+      "이런 식으로 호의를 쌓아 두는 거군. 꽤 영리한데?"
+    ],
+    "weapon": [
+      "오, 꽤 쓸 만한 장비잖아? 내 손에 들어온 이상 잘 써 주지.",
+      "무기를 쥐어 준다는 건 그만큼 판을 키우겠다는 뜻이겠지.",
+      "이거면 유리한 고지를 점하기 훨씬 수월해지겠네. 고마워.",
+      "네가 이걸 넘긴 이유, 나름대로 계산해 둘게.",
+      "좋아, 좋은 패를 쥐었으니 이제 판세를 한번 읽어 볼까."
+    ],
+    "rescue": [
+      "하마터면 큰 손해 볼 뻔했네. 타이밍 좋게 끼어들었어.",
+      "네가 움직여 준 덕분에 빚을 졌군. 계산에 넣어 두지.",
+      "판이 뒤집히는 순간을 제대로 잡았네. 인정해 줄게.",
+      "위험을 감수하고 구해 줄 줄은 몰랐는데… 의외의 변수야.",
+      "이번엔 네 덕을 봤어. 조건만 맞으면 같이 움직여도 나쁘지 않겠네."
+    ]
+  },
+  "이타적": {
+    "food": [
+      "나까지 이렇게 챙겨 주다니… 고마워, 네 몫도 꼭 잘 챙겨야 해.",
+      "따뜻한 마음까지 같이 전해지는 것 같아. 정말 고마워.",
+      "서로 조금씩 나누면서 버티면 분명 길이 보일 거야.",
+      "네가 이렇게 마음을 써 주니까 나도 더 힘을 내야겠다는 생각이 들어.",
+      "고마워. 이 고마움은 꼭 다른 방식으로 갚을게."
+    ],
+    "weapon": [
+      "소중한 무기를 나한테 선뜻 내어 주다니… 고마워, 꼭 지킬게.",
+      "네가 믿고 맡겨 준 무기니까, 부끄럽지 않게 다루겠어.",
+      "이걸로 나뿐만 아니라 주변 사람들도 지킬 수 있다면 좋겠어.",
+      "네 마음까지 함께 건네받은 기분이야. 고마워.",
+      "든든한 장비를 쥐여 줘서 고마워. 무리하지 않고 잘 쓸게."
+    ],
+    "rescue": [
+      "위험한데 나 때문에 나서 주다니… 정말 고마워, 네가 아니었으면…",
+      "네가 구해 줘서 무사할 수 있었어. 다친 데는 없어?",
+      "누군가를 구한다는 게 말처럼 쉽지 않은데… 넌 정말 대단해.",
+      "네 덕분에 다시 숨을 쉴 수 있게 됐어. 진심으로 고마워.",
+      "이 은혜는 절대 잊지 않을게. 네가 위급할 땐 내가 꼭 지킬게."
+    ]
+  },
+  "냉정형": {
+    "food": [
+      "식량 보급인가. 효율적인 판단이다. 고맙다.",
+      "허기 관리는 생존의 기본이지. 잘 챙겨 두겠다.",
+      "불필요한 감정 없이 필요한 걸 건네는군. 마음에 든다.",
+      "체력 유지에 도움이 되겠군. 고맙게 받는다.",
+      "상황 파악이 빠르군. 식량은 아껴서 쓰겠다."
+    ],
+    "weapon": [
+      "실전용 장비로군. 무장 상태가 한층 안정되겠다.",
+      "무기의 특성을 파악해 두면 교전에서 유리해진다. 고맙다.",
+      "공격 옵션을 늘려 준 건 확실한 이득이다. 잘 쓰겠다.",
+      "네 판단은 냉정하고 정확하군. 이 무기로 간격을 지키겠다.",
+      "제때 무장을 보충해 줘서 고맙다. 방심하지 않겠다."
+    ],
+    "rescue": [
+      "개입 타이밍이 정확했다. 덕분에 불리한 교전을 끊었군.",
+      "냉정하게 상황을 읽고 움직였구나. 고맙다.",
+      "위기 상황에서 흔들리지 않고 구해 줘서 고맙게 생각한다.",
+      "네 판단력 덕분에 생존 확률이 유지됐다. 기억해 두겠다.",
+      "예상 밖의 지원이었지만 결과는 확실하군. 고맙다."
+    ]
+  },
+  "신중형": {
+    "food": [
+      "음식을 건네주다니… 고마워. 상하지 않았는지 확인하고 잘 먹을게.",
+      "배고픔을 줄여 두면 판단도 차분해지지. 고마워.",
+      "조심스럽지만 네 호의는 고맙게 받을게.",
+      "지금 같은 상황에선 식량 하나가 큰 힘이 돼. 고마워.",
+      "천천히 아껴 먹으면서 버텨 볼게. 고마워."
+    ],
+    "weapon": [
+      "신중하게 고른 무기 같네. 다루기 익혀서 조심스레 쓸게.",
+      "내구도나 간격을 잘 재면서 쓰면 꽤 믿음직하겠어. 고마워.",
+      "갑작스런 습격에 대비할 수단이 생겼네. 고마워.",
+      "무기를 넘겨준 네 신중함에 고마움을 표할게.",
+      "무리하지 않고 꼭 필요한 순간에만 쓰도록 할게."
+    ],
+    "rescue": [
+      "위험한 순간에 침착하게 구해 줘서 정말 고마워…",
+      "설마 제때 나타나 줄 줄은 몰랐어. 덕분에 살았어.",
+      "방심했던 내 실수를 네가 메워 줬네. 고마워.",
+      "안전하게 빠져나올 수 있게 해 줘서 정말 고마워.",
+      "네가 옆에 있어 줘서 한시름 놨어. 앞으로 더 조심할게."
+    ]
+  },
+  "감정형": {
+    "food": [
+      "으응… 먹을 거 챙겨 주는 거, 괜히 가슴이 뭉클하잖아. 고마워!",
+      "배고팠던 마음이 한순간에 사르르 풀리는 기분이야!",
+      "이런 사소한 다정함이 이 섬에선 제일 크게 와닿아.",
+      "고마워! 너랑 있으면 감정선이 자꾸 요동치네.",
+      "잘 먹을게! 덕분에 기운이 확 살아났어!"
+    ],
+    "weapon": [
+      "와, 멋지다! 이 무기 들고 있으면 극적인 장면이라도 찍을 것 같아!",
+      "네가 이걸 건네주니까 마음이 확 뜨거워지네. 고마워!",
+      "진짜 승부는 지금부터라는 느낌이야! 잘 쓸게!",
+      "이런 무기를 내 손에 쥐여 주다니, 기대를 저버릴 수 없지!",
+      "고마워! 감정 실어서 제대로 한 방 날려 줄게!"
+    ],
+    "rescue": [
+      "하아… 심장이 터질 것 같았는데 네가 나타나서 구해 줬어…!",
+      "극적인 구출이잖아…! 정말 고마워, 눈물이 다 나려고 해…",
+      "네가 내 편이 되어 준 순간이 너무 강렬하게 남았어. 고마워!",
+      "살았다는 실감이 확 들어… 정말 고마워!",
+      "이 장면은 절대 잊지 못할 거야. 구해 줘서 진심으로 고마워!"
+    ]
+  },
+  "자유형": {
+    "food": [
+      "오, 땡큐! 배고팠는데 딱 타이밍 좋게 들어왔네.",
+      "형식 차릴 거 있나, 맛있게 먹으면 그만이지! 고마워.",
+      "이런 소소한 챙김, 은근히 기분 좋은데?",
+      "먹을 거 나눠 주는 사람과는 금방 친해질 수 있을 것 같아.",
+      "잘 먹었어! 이제 다시 가볍게 움직여 볼까?"
+    ],
+    "weapon": [
+      "오호, 이거 꽤 쿨한데? 내 스타일대로 자유롭게 써 볼게!",
+      "무기 하나 생기니까 분위기가 확 바뀌네. 고마워!",
+      "틀에 박히지 않고 내 방식대로 휘둘러 볼게!",
+      "고마워, 좋은 장난감 하나 생긴 기분이야!",
+      "이거면 어디서든 내 리듬을 지킬 수 있겠어."
+    ],
+    "rescue": [
+      "어이쿠, 꽤 아슬아슬했네! 구해 줘서 고마워, 넌 진짜 멋지다.",
+      "위기 속에서 툭 튀어나와 구해 주다니, 영화 같은데?",
+      "덕분에 한숨 돌렸어. 고마워, 다음엔 내가 한 턱 쏠게!",
+      "흐름이 꼬일 뻔했는데 네가 깔끔하게 끊어 줬네. 고마워!",
+      "살아남는 재미는 이런 데서 오는 건지도 모르겠네. 고마워!"
+    ]
+  },
+  "관찰형": {
+    "food": [
+      "식량을 건네는 행동에서 네 성향이 조금 보이네. 고마워.",
+      "허기를 채워 두면 주변을 관찰하는 집중력도 유지되지. 고마워.",
+      "말없이 챙겨 주는 모습이 인상적이야. 잘 먹을게.",
+      "상황을 보고 필요한 걸 건넬 줄 아는 사람이구나. 고마워.",
+      "이 식량, 요긴하게 쓰면서 주변 동선도 잘 살펴볼게."
+    ],
+    "weapon": [
+      "이 무기의 무게중심과 사거리… 꽤 흥미로운 선택이야. 고마워.",
+      "상대 움직임을 읽으면서 쓰기에 나쁘지 않은 장비네.",
+      "무장을 보충해 준 의도, 잘 새겨둘게. 고마워.",
+      "관찰만 하던 나에게 확실한 수단을 쥐여 줬네.",
+      "네가 건네준 무기, 빈틈없이 잘 다뤄 볼게."
+    ],
+    "rescue": [
+      "공격 타이밍과 시야 사각을 정확히 노렸네. 구해 줘서 고마워.",
+      "주변을 면밀히 보고 있었기에 가능했던 구출이야. 고마워.",
+      "위기 순간에도 침착하게 움직이는 걸 보니 예사롭지 않네.",
+      "네 덕분에 상황을 다시 볼 수 있게 됐어. 고마워.",
+      "기록해 두고 싶을 만큼 든든한 지원이었어. 고마워."
+    ]
+  },
+  "돌격형": {
+    "food": [
+      "좋아, 밥심으로 밀어붙이는 거지! 고맙다!",
+      "허기 채웠으니 이제 몸이 훨씬 가벼운데? 잘 먹었어!",
+      "망설임 없이 챙겨 주는 기세, 마음에 들어!",
+      "배고픔 따위로는 안 멈춰! 고맙게 잘 먹을게!",
+      "든든하게 먹었으니 앞장서서 달려 볼까!"
+    ],
+    "weapon": [
+      "오, 바로 이거지! 무장 갖췄으니 망설일 게 없군!",
+      "이 무기 쥐고 정면으로 돌파해 주마! 고맙다!",
+      "공격력 보충 완료! 부딪힐 놈 있으면 바로 맞선다!",
+      "고맙다! 주저하지 않고 끝까지 밀어붙여 볼게!",
+      "네가 찔러 준 이 무기, 헛되게 안 휘두른다!"
+    ],
+    "rescue": [
+      "크하, 뒤치기 당할 뻔했는데 네가 치고 들어왔네! 고맙다!",
+      "망설임 없이 달려들어 구해 준 그 배짱, 끝내주는데!",
+      "네가 옆에서 받쳐 주니까 한 번 더 돌격할 힘이 난다!",
+      "위기를 뚫고 구해 줘서 고맙다! 이 기세 그대로 간다!",
+      "같이 부딪혀서 살아남자는 뜻이지? 고맙다, 동료!"
+    ]
+  }
+};
+
+function getTraitSituationalLine(npcName, kind) {
+  const npc = NPC_ROSTER.find(n => n.name === npcName);
+  const tr = npc && TRAIT_LINES_5X3[npc.trait] ? npc.trait : '신중형';
+  const pool = (TRAIT_LINES_5X3[tr] && TRAIT_LINES_5X3[tr][kind]) ? TRAIT_LINES_5X3[tr][kind] : TRAIT_LINES_5X3['신중형'][kind];
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
+function getTraitAffinityMult(npcName) {
+  const npc = NPC_ROSTER.find(n => n.name === npcName);
+  const tr = npc ? npc.trait : '신중형';
+  if (tr === '이타적' || tr === '겁쟁이' || tr === '감정형') return 1.35;
+  if (tr === '자유형' || tr === '신중형' || tr === '관찰형') return 1.1;
+  if (tr === '기회주의') return 0.9;
+  return 0.78; // 호전적, 냉정형, 돌격형은 공략 난이도가 더 높음
 }
 
 function getNpcScriptLine(npcName, idx, fallback = '') {
@@ -1329,6 +2283,78 @@ async function doAllyAction(kind) {
   refreshGameUI();
 }
 
+function openNearGiftExchange(npcName) {
+  if (!play.me.alive || play.finished) return;
+  const npc = NPC_ROSTER.find(n => n.name === npcName);
+  const c = getPickedChar();
+  const isDrama = (c && c.club === '연극부');
+  const traitLbl = (isDrama && npc?.trait) ? ` · ${npc.trait}` : '';
+  const aff = getAffinity(npcName);
+
+  const bagBtns = play.me.bag.length
+    ? play.me.bag.map((it, i) => `
+        <button type="button" class="modal-act-btn" style="text-align:left;display:flex;justify-content:space-between;" onclick="giveItemToNearNpc('${esc(npcName)}', ${i})">
+          <span>${esc(it.name)} (${it.type === 'food' ? '음식' : (it.type === 'heal' ? '약품' : '물건')})</span>
+          <span>건네주기 ▶</span>
+        </button>`).join('')
+    : `<div style="font-size:12px;color:#4a4335;padding:8px 0;">건네줄 물건이나 먹을 것이 가방에 없다.</div>`;
+
+  openCenterModal(`
+    <div class="modal-top-bar">교류 · 물건/음식 건네주기</div>
+    <div class="enc-card" style="text-align:left;">
+      <div style="font-size:14px;font-weight:bold;margin-bottom:4px;">${esc(npcName)} (${esc(npc ? npc.club : '참가자')}${esc(traitLbl)}) · ${renderHearts(aff)}</div>
+      <div style="font-size:11px;color:#3d382d;">음식이나 회복 아이템을 건네주면 호감도가 크게 오른다.</div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:5px;max-height:190px;overflow-y:auto;margin-bottom:8px;">
+      ${bagBtns}
+    </div>
+    <button type="button" class="modal-act-btn" style="width:100%;" onclick="closeCenterModal()">닫기</button>
+  `);
+}
+
+async function giveItemToNearNpc(npcName, bagIdx) {
+  const it = play.me.bag[bagIdx];
+  if (!it) return closeCenterModal();
+  play.me.bag.splice(bagIdx, 1);
+  closeCenterModal();
+
+  const c = getPickedChar();
+  const isDrama = (c && c.club === '연극부');
+  const mult = getTraitAffinityMult(npcName);
+  let basePt = 7;
+  let kindKey = 'food';
+
+  if (it.type === 'food') {
+    // 음식은 하트 한 칸(22pt)이 한 번에 채워지지 않도록 낮게 설정
+    basePt = 7;
+    kindKey = 'food';
+  } else if (it.type === 'weapon') {
+    basePt = 11;
+    kindKey = 'weapon';
+  } else if (it.type === 'heal') {
+    basePt = 9;
+    kindKey = 'food';
+  } else if (it.name && it.name.startsWith('★')) {
+    basePt = 12;
+    kindKey = it.type === 'weapon' ? 'weapon' : 'food';
+  } else {
+    basePt = 6;
+    kindKey = 'food';
+  }
+
+  let gainPt = Math.max(3, Math.round(basePt * mult + (isDrama ? 3 : 0)));
+  // 확률적으로 호감도가 크게 오르는 특별 교류 보너스
+  if (Math.random() < 0.22) {
+    gainPt += 7;
+  }
+
+  const reply = getTraitSituationalLine(npcName, kindKey);
+  const res = gainAffinityPoints(npcName, gainPt);
+  pushDialogueToChat(`${npcName} (${renderHearts(res.hearts)})`, reply, { zone: play.me.zone });
+  await appendGameLog(`[${fmtClock()}] ${npcName}에게 '${it.name}'을(를) 건네며 교류했다. (${renderHearts(res.hearts)})`, true);
+  refreshGameUI();
+}
+
 async function interactNearNpc(npcName, askJoin = false) {
   if (!play.me.alive || play.finished) return;
   if (play.me.allyName === npcName) {
@@ -1336,56 +2362,28 @@ async function interactNearNpc(npcName, askJoin = false) {
     return;
   }
 
-  const npc = NPC_ROSTER.find(n => n.name === npcName);
-  const trait = npc ? npc.trait : '신중형';
-  const curPts = getAffinityPoints(npcName);
-  const aff = getAffinity(npcName);
-  const c = getPickedChar();
-  const dex = c?.dex || 1;
-  
-  const streak = (bondStreakMap[npcName] || 0) + 1;
-  bondStreakMap[npcName] = streak;
-
   if (!askJoin) {
-    // 너무 쉽게 오르지 않도록 교류 1회당 +4~+7pt (20pt당 하트 1칸), 3회차 이상 깊은 대화 시 추가 반응
-    const modeRoll = streak % 3;
-    let modeTag = '';
-    let lineText = '';
-    let gainPt = 5;
-
-    if (modeRoll === 1) {
-      modeTag = '말이 없다';
-      lineText = getNpcScriptLine(npcName, 3, '…');
-      gainPt = 4;
-    } else if (modeRoll === 2) {
-      modeTag = '뭔가를 하고 있다';
-      lineText = getNpcScriptLine(npcName, 4, '주변 물건을 살피며 손끝을 움직이고 있다.');
-      gainPt = 5;
-    } else {
-      modeTag = '자기 얘기';
-      const deepIdx = curPts >= 55 ? 7 : 5;
-      lineText = getNpcScriptLine(npcName, deepIdx, npc ? npc.line : '');
-      gainPt = curPts >= 40 ? 7 : 6;
-    }
-
-    if (curPts >= 70 && streak >= 5) {
-      lineText = getNpcScriptLine(npcName, 8, lineText);
-    }
-
-    const res = gainAffinityPoints(npcName, gainPt);
-    pushDialogueToChat(`${npcName} (${renderHearts(res.hearts)})`, `[${modeTag}] ${lineText}`, { zone: play.me.zone });
-    await appendGameLog(`[${fmtClock()}] ${npcName}과(와) 교류했다 — ${modeTag}. (${renderHearts(res.hearts)} · ${res.nextPts}%)`);
-    refreshGameUI();
+    openNearGiftExchange(npcName);
     return;
   }
 
-  let reqAff = 3;
-  if (trait === '호전적' || trait === '돌격형' || trait === '기회주의') reqAff = 4;
-  if (trait === '이타적' && c && npc && c.club === npc.club) reqAff = 2;
+  const npc = NPC_ROSTER.find(n => n.name === npcName);
+  const trait = npc ? npc.trait : '신중형';
+  const aff = getAffinity(npcName);
+  const c = getPickedChar();
+  const isDrama = (c && c.club === '연극부');
+  const dex = c?.dex || 1;
 
-  const prob = Math.min(0.88, 0.25 + (aff - reqAff) * 0.22 + (dex - 1) * 0.05);
+  let reqAff = 2;
+  if (trait === '호전적' || trait === '냉정형' || trait === '기회주의') reqAff = 3;
+  if (trait === '이타적' || trait === '겁쟁이') reqAff = 1;
+  if (c && npc && c.club === npc.club) reqAff = Math.max(1, reqAff - 1);
 
-  if (aff >= reqAff && Math.random() < prob) {
+  // 호감도가 낮아도 성격/재주/연극부 보정으로 낮은 확률이지만 동료 수락 가능
+  const lowAffBonus = aff < reqAff ? (0.08 + (isDrama ? 0.08 : 0) + (dex - 1) * 0.025) : 0.34;
+  const prob = Math.min(0.88, Math.max(0.05, lowAffBonus + (aff - reqAff) * 0.22 + (dex - 1) * 0.05));
+
+  if (Math.random() < prob) {
     play.me.allyName = npcName;
     play.allyCount++;
     const joinLine = getNpcScriptLine(npcName, 8, '좋아, 같이 가자. 서로 등 뒤를 지켜 주자고.');
@@ -1394,7 +2392,7 @@ async function interactNearNpc(npcName, askJoin = false) {
     openAllyInteractionMenu(npcName);
   } else {
     const reason = aff < reqAff
-      ? `호감도가 아직 부족하다 (${renderHearts(aff)} / 최소 ${reqAff}하트 필요). 대화와 교류를 더 쌓아야 한다.`
+      ? `호감도가 아직 부족하다 (${renderHearts(aff)} / 최소 ${reqAff}하트 필요). 교류로 물건이나 음식을 건네주면 빠르게 친해진다.`
       : '상대가 아직 완전히 마음을 열지 않았다.';
     const refuseLine = getNpcScriptLine(npcName, 2, '아직은 조금 더 지켜보고 싶어.');
     pushDialogueToChat(`${npcName} (${renderHearts(aff)})`, refuseLine, { zone: play.me.zone });
@@ -1404,7 +2402,16 @@ async function interactNearNpc(npcName, askJoin = false) {
 }
 
 /* ================= 중앙 모달 (돌발 / 전투 / 전리품) ================= */
+let pausedByModal = false;
+
 function openCenterModal(html) {
+  if (play.actionTimer && play.actionKind === 'move') {
+    clearInterval(play.actionTimer);
+    play.actionTimer = null;
+    play.actionKind = null;
+    play.actionTargetZone = null;
+    play.actionSec = 0;
+  }
   const box = document.getElementById('centerModalBox');
   box.innerHTML = html;
   document.getElementById('centerModal').classList.add('open');
@@ -1412,9 +2419,160 @@ function openCenterModal(html) {
 
 function closeCenterModal() {
   document.getElementById('centerModal').classList.remove('open');
-  const b = document.getElementById('centerModalBox'); if (b) b.style.transform = '';
+  const b = document.getElementById('centerModalBox');
+  if (b) { b.style.transform = ''; b.classList.remove('bat-shake'); }
   modalState.mode = null;
   modalState.busy = false;
+  if (pausedByModal) {
+    pausedByModal = false;
+    play.paused = false;
+    const pBtn = document.getElementById('refPauseBtn');
+    if (pBtn) pBtn.textContent = '일시정지';
+  }
+  refreshGameUI();
+}
+
+
+
+function openRescueModal(attackerId, victimName) {
+  if (!play.me.alive || play.finished || modalState.mode) return;
+  const attacker = play.players.find(p => p.id === attackerId && p.alive);
+  if (!attacker) return;
+  const c = getPickedChar();
+  const vNpc = NPC_ROSTER.find(n => n.name === victimName);
+  const vTrait = (c && c.club === '연극부' && vNpc?.trait) ? ` · ${vNpc.trait}` : '';
+
+  modalState.mode = 'rescue';
+  modalState.targetId = attacker.id;
+  modalState.enemyName = attacker.name;
+  modalState.victimName = victimName;
+
+  openCenterModal(`
+    <div class="modal-top-bar">위기 목격 · 구출 선택</div>
+    <div class="enc-card">
+      <div style="font-size:15px;font-weight:bold;margin-bottom:6px;">${esc(victimName)} (${esc(vNpc ? vNpc.club : '참가자')}${esc(vTrait)})이(가) ${esc(attacker.name)}에게 공격당하고 있다!</div>
+      <div style="font-size:12px;color:#333;">지금 끼어들어 구해 줄까?</div>
+    </div>
+    <div class="enc-btns" style="grid-template-columns:1fr 1fr;">
+      <button type="button" class="modal-act-btn" onclick="rescueChoice('save')">뛰어들어 구해 준다</button>
+      <button type="button" class="modal-act-btn" onclick="rescueChoice('pass')">지켜보며 지나간다</button>
+    </div>`);
+}
+
+async function rescueChoice(choice) {
+  const atkId = modalState.targetId;
+  const vName = modalState.victimName;
+  closeCenterModal();
+  if (choice === 'pass') {
+    await appendGameLog(`[${fmtClock()}] ${vName}이(가) 공격받는 상황을 조용히 지켜보며 지나쳤다.`);
+    return;
+  }
+  const c = getPickedChar();
+  const isDrama = (c && c.club === '연극부');
+  const gainPt = isDrama ? 22 : 17;
+  const res = gainAffinityPoints(vName, gainPt);
+  const rescueLine = getTraitSituationalLine(vName, 'rescue');
+  await appendGameLog(`[${fmtClock()}] ${vName}을(를) 구해주기 위해 ${modalState.enemyName}과(와) 맞섰다!`, true);
+  pushDialogueToChat(`${vName} (${renderHearts(res.hearts)})`, rescueLine, { zone: play.me.zone, showAll: false });
+  startBattleModal(atkId);
+}
+
+function calcDayNegotiateProb(c, npc) {
+  const isDrama = !!(c && c.club === '연극부');
+  const dex = c?.dex || 1;
+  const trait = npc ? npc.trait : '';
+  const traitMod = (trait === '겁쟁이' || trait === '이타적') ? 8 : ((trait === '호전적' || trait === '냉정형') ? -8 : 0);
+  const dayDecay = Math.max(0, (play.day - 2) * 7);
+  const raw = (isDrama ? 74 : 46) + (dex - 1) * 5 + traitMod - dayDecay;
+  return Math.max(12, Math.min(92, raw));
+}
+
+function calcDayFleeProb(c) {
+  const agi = c?.agi || 1;
+  const clubBonus = c?.club === '육상부' ? 16 : 0;
+  const tiredPen = play.me.condition === '피로' ? 12 : 0;
+  const dayDecay = Math.max(0, (play.day - 2) * 6);
+  const raw = 44 + (agi - 1) * 5 + clubBonus - tiredPen - dayDecay;
+  return Math.max(10, Math.min(88, raw));
+}
+
+function openProvokeModal(targetId) {
+  if (!play.me.alive || play.finished || modalState.mode) return;
+  const target = play.players.find(p => p.id === targetId && p.alive);
+  if (!target) return;
+  const npc = NPC_ROSTER.find(n => n.name === target.name);
+  const c = getPickedChar();
+  const negPct = calcDayNegotiateProb(c, npc);
+  const fleePct = calcDayFleeProb(c);
+
+  const demandModes = [
+    ['시비 걸기', '야, 길 막지 말고 눈치껏 비켜. 꼴 보기 싫으니까.'],
+    ['물건 요구', '가방에 쓸 만한 거 있지? 하나만 내놓고 지나가.'],
+    ['가진 거 다 내놔', '지금 가진 거 싹 다 바닥에 내려놔. 안 그러면 피 좀 봐야겠어.']
+  ];
+  const [kindTitle, demandLine] = demandModes[Math.floor(Math.random() * demandModes.length)];
+
+  modalState.mode = 'provoke';
+  modalState.targetId = target.id;
+  modalState.enemyName = target.name;
+  modalState.enemyClub = target.club || '참가자';
+  modalState.enemyTrait = npc ? npc.trait : '도발형';
+
+  openCenterModal(`
+    <div class="modal-top-bar">${esc(kindTitle)}</div>
+    <div class="enc-card">
+      <div style="font-size:15px;font-weight:bold;margin-bottom:6px;">${esc(target.name)} (${esc(modalState.enemyClub)})이(가) 다가왔다!</div>
+      <div style="font-size:13px;color:#141c30;margin-bottom:6px;">"${esc(demandLine)}"</div>
+      <div style="font-size:11px;color:#4a4335;">호감도 ${renderHearts(getAffinity(target.name))}</div>
+    </div>
+    <div class="enc-btns" style="grid-template-columns:1fr 1fr;">
+      <button type="button" class="modal-act-btn" onclick="provokeChoice('negotiate')">말로 협상하기 (${negPct}%)</button>
+      <button type="button" class="modal-act-btn" onclick="provokeChoice('handover')">요구 들어주기</button>
+      <button type="button" class="modal-act-btn" onclick="provokeChoice('flee')">도주하기 (${fleePct}%)</button>
+      <button type="button" class="modal-act-btn" onclick="provokeChoice('fight')">싸우기</button>
+    </div>`);
+}
+
+async function provokeChoice(choice) {
+  const name = modalState.enemyName;
+  const tid = modalState.targetId;
+  closeCenterModal();
+  const c = getPickedChar();
+  const npc = NPC_ROSTER.find(n => n.name === name);
+  const isDrama = (c && c.club === '연극부');
+
+  if (choice === 'negotiate') {
+    const negProb = calcDayNegotiateProb(c, npc) / 100;
+    if (Math.random() < negProb) {
+      gainAffinityPoints(name, isDrama ? 6 : 4);
+      const dramaTag = isDrama ? ' [연극부 특기 발동: 무대 화술 협상]' : '';
+      await appendGameLog(`[${fmtClock()}] ${name}과(와) 대화 협상에 성공해 갈등을 풀었다.${dramaTag}`, true);
+      pushDialogueToChat(name, '…말은 꽤 통하네. 오늘은 그냥 넘어가 주지.', { zone: play.me.zone, showAll: false });
+    } else {
+      await appendGameLog(`[${fmtClock()}] ${name}과의 협상이 어긋났다!`, true);
+      startBattleModal(tid);
+    }
+  } else if (choice === 'handover') {
+    if (play.me.bag.length > 0) {
+      const taken = play.me.bag.pop();
+      await appendGameLog(`[${fmtClock()}] ${name}의 요구대로 '${taken.name}'을(를) 내어주고 자리를 피했다.`, true);
+    } else {
+      play.me.hunger = Math.max(0, play.me.hunger - 10);
+      await appendGameLog(`[${fmtClock()}] 내줄 물건이 없어 진땀을 빼며 물러났다. (허기 -10)`, true);
+    }
+  } else if (choice === 'flee') {
+    const fleeP = calcDayFleeProb(c) / 100;
+    if (Math.random() < fleeP) {
+      sfx.flee();
+      await appendGameLog(`[${fmtClock()}] ${name}에게서 재빠르게 도주했다.`);
+    } else {
+      await appendGameLog(`[${fmtClock()}] 도주하려다 길이 막혀 교전에 휘말렸다!`, true);
+      startBattleModal(tid);
+    }
+  } else {
+    startBattleModal(tid);
+  }
+  refreshGameUI();
 }
 
 function openEncounterModal(targetId, factionLabel = '') {
@@ -1466,6 +2624,7 @@ function startBattleModal(targetId) {
 
   if (!play.paused) {
     play.paused = true;
+    pausedByModal = true;
     document.getElementById('refPauseBtn').textContent = '계속하기';
   }
 
@@ -1616,13 +2775,28 @@ function appendModalBattleLog(msg) {
 
 async function mEnemyTurn() {
   if (modalState.mode !== 'battle') return;
-  await new Promise(r => setTimeout(r, 420));
+  const trDelay = (modalState.enemyTrait === '겁쟁이' || modalState.enemyTrait === '신중형') ? 620 : ((modalState.enemyTrait === '호전적' || modalState.enemyTrait === '돌격형') ? 280 : 420);
+  await new Promise(r => setTimeout(r, trDelay));
+  if (modalState.mode !== 'battle') return;
+  if ((modalState.enemyTrait === '겁쟁이') && modalState.enemyHp <= 6 && Math.random() < 0.28) {
+    sfx.flee();
+    appendModalBattleLog(`${modalState.enemyName}이(가) 겁에 질려 뒤로 도망쳤다!`);
+    await new Promise(r => setTimeout(r, 420));
+    closeCenterModal();
+    await appendGameLog(`[${fmtClock()}] ${modalState.enemyName}이(가) 전투 도중 도주했다.`);
+    refreshGameUI();
+    return;
+  }
   if (modalState.mode !== 'battle') return;
 
   const c = getPickedChar();
-  const dodgeP = Math.min(0.45, ((c?.agi || 1) - 1) * 0.06);
+  const hNow = Math.floor((play.minutes % 1440) / 60);
+  const isNightNow = !(hNow >= 6 && hNow < 18);
+  const sleepLackPen = (play.me.condition === '피로' || (isNightNow && (play.nightSleepMinutes || 0) < 120)) ? 0.14 : 0;
+  const dodgeP = Math.max(0.03, Math.min(0.45, ((c?.agi || 1) - 1) * 0.06 - sleepLackPen));
   if (Math.random() < dodgeP) {
-    appendModalBattleLog(`${modalState.enemyName}의 공격을 피했다!`);
+    sfx.flee();
+    appendModalBattleLog(`${modalState.enemyName}의 공격을 재빨리 피했다!`);
     modalState.defending = false;
     modalState.busy = false;
     renderModalBattleHp();
@@ -1640,13 +2814,27 @@ async function mEnemyTurn() {
     renderModalBattleHp();
     return;
   }
-  let dmg = Math.max(1, 2 + Math.floor(Math.random() * 2));
+  const enDayBonus = Math.min(3, Math.floor((play.day - 1) * 0.7));
+  const enTraitDmg = (modalState.enemyTrait === '호전적' || modalState.enemyTrait === '돌격형') ? 1 : 0;
+  let dmg = Math.max(2, 3 + enDayBonus + enTraitDmg + Math.floor(Math.random() * 2));
+  if ((play.me.shield || 0) > 0) {
+    play.me.shield--;
+    dmg = Math.max(0, dmg - 1);
+    appendModalBattleLog(`방어구가 충격을 흡수했다! (남은 보호 ${play.me.shield})`);
+  }
   if (modalState.defending) {
     dmg = Math.max(0, dmg - 2);
     appendModalBattleLog(`방어 자세로 피해를 줄였다! (피해 ${dmg})`);
   }
   modalState.defending = false;
   play.me.hp = Math.max(0, play.me.hp - dmg);
+  sfx.hurt();
+  const mBoxEl = document.getElementById('centerModalBox');
+  if (mBoxEl) {
+    mBoxEl.classList.remove('bat-shake');
+    void mBoxEl.offsetWidth;
+    mBoxEl.classList.add('bat-shake');
+  }
   if (Math.random() < 0.14 && play.me.condition === '양호') {
     play.me.condition = '부상';
     appendModalBattleLog(`충격으로 '부상' 상태가 되었다.`);
@@ -1660,6 +2848,21 @@ async function mEnemyTurn() {
     closeCenterModal();
     await handleMeDead(`${modalState.enemyName}과의 전투`);
     return;
+  }
+  if (c && c.club === '검도부' && modalState.enemyHp > 0 && Math.random() < 0.25) {
+    const counterDmg = 2 + Math.floor(((c.str || 1) - 1) * 0.5);
+    modalState.enemyHp = Math.max(0, modalState.enemyHp - counterDmg);
+    sfx.attack();
+    appendModalBattleLog(` [검도부 특기 발동: 즉시 반격!] ${modalState.enemyName}에게 ${counterDmg} 반격 피해.`);
+    if (modalState.enemyHp === 0) {
+      await sb.from('room_players').update({ hp: 0, alive: false }).eq('id', modalState.targetId);
+      sfx.beep();
+      setMarqueeAlert(`${modalState.enemyName} 사망!!`);
+      appendModalBattleLog(`${modalState.enemyName}이(가) 반격에 쓰러졌다!`);
+      await new Promise(r => setTimeout(r, 420));
+      openLootModal(modalState.enemyName);
+      return;
+    }
   }
   modalState.busy = false;
   renderModalBattleHp();
@@ -1681,24 +2884,70 @@ async function mBattleCmd(cmd) {
   const c = getPickedChar();
 
   if (cmd === 'atk') {
-    const hitP = Math.min(0.95, 0.85 + ((c?.dex || 1) - 1) * 0.03);
+    const hAtk = Math.floor((play.minutes % 1440) / 60);
+    const nightAtk = !(hAtk >= 6 && hAtk < 18);
+    const tiredAtkPen = (play.me.condition === '피로' || (nightAtk && (play.nightSleepMinutes || 0) < 120)) ? 14 : 0;
+    const hitP = Math.max(0.30, Math.min(0.92, 0.74 + ((c?.dex || 1) - 1) * 0.03 - tiredAtkPen / 100));
     if (Math.random() > hitP) {
       appendModalBattleLog(`${c?.name || '실험체'}의 공격이 빗나갔다!`);
       await mEnemyTurn();
       return;
     }
     const strBonus = Math.floor(((c?.str || 1) - 1) * 0.5);
-    const dmg = Math.max(1, (play.me.weapon.atk || 2) + strBonus + Math.floor(Math.random() * 2));
-    if (play.me.weapon.dura != null) {
+    let clubAtkBonus = 0;
+    let clubAtkMsg = '';
+    if (c?.club === '궁도부' && play.me.weapon?.kind === '원거리') {
+      clubAtkBonus += 2;
+      clubAtkMsg = ' [궁도부 특기 발동: 사격 위력 +2]';
+    } else if (c?.club === '만화부' && Math.random() < 0.35) {
+      clubAtkBonus += 2;
+      clubAtkMsg = ' [만화부 특기 발동: 극적인 일격 +2]';
+    } else if (c?.club === '음악부' && Math.random() < 0.32) {
+      clubAtkBonus += 1;
+      clubAtkMsg = ' [음악부 특기 발동: 리듬 템포 추가타 +1]';
+    }
+    const dmg = Math.max(1, (play.me.weapon.atk || 2) + strBonus + clubAtkBonus + Math.floor(Math.random() * 2));
+    if (play.me.weapon && play.me.weapon.dura != null) {
       play.me.weapon.dura = Math.max(0, play.me.weapon.dura - 1);
-      if (play.me.weapon.dura === 0) {
-        play.me.weapon = { name: '맨손', atk: 2 + ((c?.str || 1) - 1), kind: '근접', dura: null, maxDura: null };
-        appendModalBattleLog(`무기 내구도가 다해 맨손이 되었다.`);
+      const eqIdx = typeof play.me.weapon.bagIdx === 'number'
+        ? play.me.weapon.bagIdx
+        : play.me.bag.findIndex(b => b.type === 'weapon' && b.name === play.me.weapon.name);
+      if (eqIdx >= 0 && play.me.bag[eqIdx]) {
+        play.me.bag[eqIdx].dura = play.me.weapon.dura;
+        play.me.bag[eqIdx].desc = `공격력 ${play.me.bag[eqIdx].atk} (${play.me.bag[eqIdx].kind || '근접'}) · 내구 ${play.me.weapon.dura}/${play.me.weapon.maxDura}`;
       }
+      appendModalBattleLog(`(${play.me.weapon.name} 내구도 ${play.me.weapon.dura}/${play.me.weapon.maxDura})`);
+      if (play.me.weapon.dura === 0) {
+        const brokenName = play.me.weapon.name;
+        if (eqIdx >= 0) play.me.bag.splice(eqIdx, 1);
+        play.me.weapon = { name: '맨손', atk: 2 + ((c?.str || 1) - 1), kind: '근접', dura: null, maxDura: null, bagIdx: -1 };
+        appendModalBattleLog(`'${brokenName}'의 내구도가 다해 부서졌다! 맨손이 되었다.`);
+        appendGameLog(`[${fmtClock()}] '${brokenName}'의 내구도가 소진되어 파괴되었다.`, true);
+      }
+      refreshGameUI();
     }
     modalState.enemyHp = Math.max(0, modalState.enemyHp - dmg);
-    appendModalBattleLog(`${c?.name || '실험체'}의 공격! ${modalState.enemyName}에게 ${dmg} 피해.`);
+    sfx.attack();
+    const wName = play.me.weapon?.name || '';
+    const wKind = play.me.weapon?.kind || '';
+    if (wKind === '날붙이' && Math.random() < 0.35) {
+      appendModalBattleLog(`'${wName}'의 날이 깊게 베며 ${modalState.enemyName}에게 출혈을 일으켰다!`);
+    } else if (wName.includes('바람총') && Math.random() < 0.45) {
+      modalState.enemyHp = Math.max(0, modalState.enemyHp - 1);
+      appendModalBattleLog(`'${wName}'의 독침이 스며들어 ${modalState.enemyName}이(가) 중독 피해를 입었다! (추가 -1)`);
+    } else if (wKind === '근접' && Math.random() < 0.25) {
+      appendModalBattleLog(`'${wName}'의 묵직한 타격으로 ${modalState.enemyName}에게 부상 충격을 주었다!`);
+    }
+    appendModalBattleLog(`${c?.name || '실험체'}의 공격! ${modalState.enemyName}에게 ${dmg} 피해.${clubAtkMsg}`);
     renderModalBattleHp();
+
+    if (modalState.enemyHp > 0 && play.me.allyName && Math.random() < 0.45) {
+      const allyDmg = 2 + Math.floor(Math.random() * 2);
+      modalState.enemyHp = Math.max(0, modalState.enemyHp - allyDmg);
+      sfx.attack();
+      appendModalBattleLog(`동료 ${play.me.allyName}의 지원 사격/타격! ${modalState.enemyName}에게 ${allyDmg} 추가 피해.`);
+      renderModalBattleHp();
+    }
 
     if (modalState.enemyHp === 0) {
       const finHearts = getAffinity(modalState.enemyName);
@@ -1715,6 +2964,8 @@ async function mBattleCmd(cmd) {
         return;
       }
       await sb.from('room_players').update({ hp: 0, alive: false }).eq('id', modalState.targetId);
+      sfx.beep();
+      setMarqueeAlert(`${modalState.enemyName} 사망!!`);
       await sb.from('room_messages').insert([{
         room_code: play.code, sender: 'SYS', zone: 'all', msg_type: 'sys',
         content: `[속보] ${modalState.enemyName}이(가) 사망했습니다.`
@@ -1739,7 +2990,7 @@ async function mBattleCmd(cmd) {
     await mEnemyTurn();
   } else if (cmd === 'persuade') {
     const curH = getAffinity(modalState.enemyName);
-    const perP = Math.min(0.90, (curH >= 3 ? 0.72 : 0.35) + ((c?.dex || 1) - 1) * 0.05);
+    const perP = Math.max(0.12, Math.min(0.84, (curH >= 3 ? 0.62 : 0.32) + ((c?.dex || 1) - 1) * 0.04 - Math.max(0, (play.day - 2) * 0.06)));
     if (Math.random() < perP) {
       const g = gainAffinityPoints(modalState.enemyName, 6);
       const line9 = getNpcScriptLine(modalState.enemyName, 9, '…너는 못 죽이겠다.');
@@ -1773,8 +3024,9 @@ async function mBattleCmd(cmd) {
     refreshGameUI();
     return;
   } else if (cmd === 'flee') {
-    const fleeP = Math.min(0.90, 0.50 + ((c?.agi || 1) - 1) * 0.06 + (c?.club === '육상부' ? 0.20 : 0));
+    const fleeP = Math.max(0.10, Math.min(0.85, 0.40 + ((c?.agi || 1) - 1) * 0.05 + (c?.club === '육상부' ? 0.16 : 0) - Math.max(0, (play.day - 2) * 0.06)));
     if (Math.random() < fleeP) {
+      sfx.flee();
       appendModalBattleLog(`도주에 성공했다!`);
       await new Promise(r => setTimeout(r, 380));
       closeCenterModal();
@@ -1798,11 +3050,16 @@ function openLootModal(enemyName) {
 }
 
 function renderLootModal(enemyName) {
+  const fmtLootTag = (it) => {
+    const duraStr = (it.type === 'weapon' && it.dura != null) ? ` · 내구 ${it.dura}/${it.maxDura}` : '';
+    const sub = it.desc ? ` (${it.desc}${duraStr && !it.desc.includes('내구') ? duraStr : ''})` : duraStr;
+    return `${it.name}${sub}`;
+  };
   const myHtml = play.me.bag.length
-    ? play.me.bag.map((it, i) => `<div class="loot-slot" onclick="moveItemBagToLoot(${i})"><span>${esc(it.name)}</span><span>→</span></div>`).join('')
+    ? play.me.bag.map((it, i) => `<div class="loot-slot" onclick="moveItemBagToLoot(${i})"><span>${esc(fmtLootTag(it))}</span><span>→</span></div>`).join('')
     : `<div style="font-size:11px;color:#555;">비어 있음</div>`;
   const enHtml = modalState.lootItems.length
-    ? modalState.lootItems.map((it, i) => `<div class="loot-slot" onclick="takeLootItem(${i}, '${esc(enemyName)}')"><span>←</span><span>${esc(it.name)}</span></div>`).join('')
+    ? modalState.lootItems.map((it, i) => `<div class="loot-slot" onclick="takeLootItem(${i}, '${esc(enemyName)}')"><span>←</span><span>${esc(fmtLootTag(it))}</span></div>`).join('')
     : `<div style="font-size:11px;color:#555;">남은 물건 없음</div>`;
 
   openCenterModal(`
@@ -2099,7 +3356,7 @@ async function startWithCurrentChar() {
 async function refreshRooms() {
   const box = document.getElementById('lobbyRoomList');
   const { data } = await sb.from('rooms')
-    .select('*').eq('is_private', false).eq('status', 'playing')
+    .select('*').eq('is_private', false).eq('status', 'waiting')
     .order('created_at', { ascending: false }).limit(20);
   if (!data || !data.length) {
     box.innerHTML = '<div style="text-align:center; color:#8eb8ff; padding-top:46px;">열린 방이 없습니다. 방을 만들어 보세요.</div>';
@@ -2162,6 +3419,10 @@ async function enterCode(code) {
     document.getElementById('lobbyMsg').textContent = '종료되었거나 없는 방입니다.';
     return;
   }
+  if (r.status !== 'waiting') {
+    document.getElementById('lobbyMsg').textContent = '이미 게임 중인 방에는 입장할 수 없습니다.';
+    return;
+  }
   await launchPlay(r.code, false, c, null, false);
 }
 
@@ -2214,6 +3475,8 @@ function drawLobbyFriends() {
 function initNpcAlliances(players) {
   const npcs = players.filter(p => p.is_npc && p.alive).map(p => p.name);
   npcAlliances = [];
+  plantedMines = [];
+  zoneDroppedItems = {};
   for (let i = 0; i + 1 < npcs.length; i += 6) {
     npcAlliances.push([npcs[i], npcs[i + 1]]);
   }
@@ -2252,6 +3515,8 @@ async function launchPlay(code, isHost, c, spawnNpcCount = null, isSolo = false)
   play.combatCount = 0;
   play.allyCount = 0;
   watchOvernight = false;
+  isSleepingNow = false;
+  sleepHealCarry = 0;
   lastDayPhase = 'day';
   chatTabMode = 'all';
   setChatTab('all');
@@ -2291,7 +3556,7 @@ async function launchPlay(code, isHost, c, spawnNpcCount = null, isSolo = false)
   document.getElementById('refChatLog').innerHTML = '';
   document.getElementById('refGameLog').innerHTML = '';
   document.getElementById('refResultActionWrap').innerHTML = '';
-  document.getElementById('refCodeInfo').textContent = `방 코드: ${code} · ${play.isSolo ? '솔로 모드 (약 40분)' : '멀티 모드 (1x 고정)'}`;
+  document.getElementById('refCodeInfo').innerHTML = `방 코드: <strong>${esc(code)}</strong> <button type="button" class="ref-mini-btn" onclick="copyRoomCode()" style="margin-left:3px;">복사</button> · ${play.isSolo ? '솔로 모드' : '멀티 모드 (1x 고정)'}`;
 
   const { data: ins } = await sb.from('room_players').insert([{
     room_code: code, name: c.name, exp_number: c.exp_number, club: c.club,
@@ -2307,7 +3572,7 @@ async function launchPlay(code, isHost, c, spawnNpcCount = null, isSolo = false)
   const npcTotal = spawnNpcCount ?? play.players.filter(p => p.is_npc).length;
   const totalParticipants = play.players.length || (npcTotal + 1);
 
-  await appendGameLog(`[${fmtClock()}] 【방송】 시뮬레이션을 시작합니다. (하루 4분 · 3분 30초마다 2구역 폐쇄)`, true);
+  await appendGameLog(`[${fmtClock()}] 【방송】 시뮬레이션을 시작합니다. (3분 30초마다 2구역 폐쇄)`, true);
   await appendGameLog(`[${fmtClock()}] 섬에는 당신을 포함해 ${totalParticipants}명의 학생이 있다.`);
   await appendGameLog(`[${fmtClock()}] 지급 무기 '${starterWep.name}'을(를) 챙겼다.`);
   await sb.from('room_messages').insert([{
@@ -2319,6 +3584,23 @@ async function launchPlay(code, isHost, c, spawnNpcCount = null, isSolo = false)
   startGameLoops();
   refreshGameUI();
   showView('viewGame');
+}
+
+
+async function copyRoomCode() {
+  if (!play.code) return;
+  try {
+    await navigator.clipboard.writeText(play.code);
+    await appendGameLog(`[${fmtClock()}] 방 코드(${play.code})가 클립보드에 복사되었습니다.`, true);
+  } catch (e) {
+    const tmp = document.createElement('input');
+    tmp.value = play.code;
+    document.body.appendChild(tmp);
+    tmp.select();
+    document.execCommand('copy');
+    document.body.removeChild(tmp);
+    await appendGameLog(`[${fmtClock()}] 방 코드(${play.code})가 복사되었습니다.`, true);
+  }
 }
 
 function setGameSpeed(rate) {
@@ -2345,6 +3627,21 @@ function fmtCloseRemain() {
   const s = sec % 60;
   const leftZones = ISLAND_ZONES.length - play.banned.length;
   return `다음 폐쇄 ${String(m).padStart(2,'0')}분 ${String(s).padStart(2,'0')}초 (남은 구역 ${leftZones})`;
+}
+
+
+let marqueeAlertTimer = null;
+function setMarqueeAlert(msg) {
+  const box = document.getElementById('refMarqueeBox');
+  const trk = document.getElementById('refMarqueeTrack');
+  if (!box || !trk) return;
+  box.classList.add('alert-mode');
+  trk.textContent = `★ ${msg} ★   ★ ${msg} ★   ★ ${msg} ★   ★ ${msg} ★   `;
+  if (marqueeAlertTimer) clearTimeout(marqueeAlertTimer);
+  marqueeAlertTimer = setTimeout(() => {
+    box.classList.remove('alert-mode');
+    trk.textContent = '■ 연인식 프로젝트 ■ 戀人式 ■ 연인식 프로젝트 ■ 戀人式 ■ 연인식 프로젝트 ■ 戀人式 ■ 연인식 프로젝트 ■ 戀人式';
+  }, 14000);
 }
 
 function triggerPhaseFlash(phase) {
@@ -2393,16 +3690,19 @@ function addChatMessage(sender, text, avatarData, isSys = false, zone = 'all', i
   const nowStr = fmtClock().split(' ')[1] || '08:00';
   const zObj = zone !== 'all' ? ISLAND_ZONES.find(x => x.id === zone) : null;
   const zoneBadge = zObj ? ` [${zObj.name}]` : '';
+  const myCharObj = getPickedChar();
+  const isPlayerChat = !isNpcLine && myCharObj && sender === myCharObj.name;
   const row = document.createElement('div');
-  row.className = 'ref-chat-row';
+  row.className = isPlayerChat ? 'ref-chat-row player-row' : 'ref-chat-row';
   row.dataset.zone = zone;
   if (chatTabMode === 'zone' && zone !== 'all' && zone !== play.me.zone) row.style.display = 'none';
   const avHtml = avatarData ? `<img src="${avatarData}" alt="">` : esc(sender.slice(0, 1));
   const bubbleCls = isNpcLine ? 'ref-chat-bubble npc-line' : 'ref-chat-bubble';
+  const senderLabel = isPlayerChat ? `[실험체-${myCharObj.exp_number}] ${sender}` : sender;
   row.innerHTML = `
     <div class="ref-chat-av">${avHtml}</div>
     <div>
-      <div class="ref-chat-meta">${esc(sender)}${esc(zoneBadge)} · ${nowStr}</div>
+      <div class="ref-chat-meta">${esc(senderLabel)}${esc(zoneBadge)} · ${nowStr}</div>
       <div class="${bubbleCls}">${esc(text)}</div>
     </div>`;
   box.appendChild(row);
@@ -2439,7 +3739,7 @@ function togglePauseGame() {
 async function applyHourlyConditions() {
   if (!play.me.alive || play.finished) return;
   const m = play.me;
-  m.hunger = Math.max(0, m.hunger - 3);
+  m.hunger = Math.max(0, Math.round((m.hunger - 1.5) * 10) / 10);
   if (m.hunger < 30 && m.condition === '양호') {
     m.condition = '굶주림';
     await appendGameLog(`[${fmtClock()}] 허기가 30 미만으로 떨어져 '굶주림' 상태가 되었다.`, true);
@@ -2482,10 +3782,28 @@ function startGameLoops() {
 
     const h = Math.floor((play.minutes % 1440) / 60);
     const curPhase = (h >= 6 && h < 18) ? 'day' : 'night';
+
+    if (isSleepingNow && play.me.alive) {
+      if (curPhase === 'night') {
+        play.nightSleepMinutes = Math.min(180, (play.nightSleepMinutes || 0) + minDelta);
+      }
+      sleepHealCarry += minDelta;
+      if (sleepHealCarry >= 60) {
+        sleepHealCarry -= 60;
+        if (play.me.hp < play.me.maxHp) {
+          play.me.hp = Math.min(play.me.maxHp, play.me.hp + 1);
+          if (play.pid) await sb.from('room_players').update({ hp: play.me.hp }).eq('id', play.pid);
+        }
+        if (play.nightSleepMinutes >= 180 && play.me.condition === '피로') {
+          play.me.condition = '양호';
+        }
+      }
+    }
     if (curPhase !== lastDayPhase) {
       const prevPhase = lastDayPhase;
       lastDayPhase = curPhase;
       triggerPhaseFlash(curPhase);
+      bgm.setMode(curPhase);
 
       if (curPhase === 'night') {
         play.nightSleepMinutes = 0;
@@ -2505,6 +3823,8 @@ function startGameLoops() {
           }
         }
         watchOvernight = false;
+  isSleepingNow = false;
+  sleepHealCarry = 0;
         await appendGameLog(`[${fmtClock()}] 날이 밝았다.`, true);
       }
     }
@@ -2517,7 +3837,11 @@ function startGameLoops() {
         play.nextBanned = shuffled.slice(0, CLOSE_PER_STEP).map(z => z.id);
         const warnNames = play.nextBanned.map(id => ISLAND_ZONES.find(z => z.id === id)?.name).filter(Boolean);
         if (warnNames.length) {
-          await appendGameLog(`[${fmtClock()}] 【경고】 ${warnNames.join(', ')} 구역 폐쇄 예정!`, true);
+          const minLeft = Math.max(1, Math.ceil(play.closeSec / 60));
+          const alertMsg = `${minLeft}분 뒤에 ${warnNames.join(', ')} 구역 폐쇄예정!!`;
+          sfx.beep();
+          setMarqueeAlert(alertMsg);
+          await appendGameLog(`[${fmtClock()}] 【경고】 ${alertMsg}`, true);
         }
       }
     }
@@ -2533,7 +3857,7 @@ function startGameLoops() {
       if (play.me.hp === 0) await handleMeDead('폐쇄 구역');
     }
 
-    if (play.host) {
+    if (play.host && Math.random() < 0.36) {
       const safe = ISLAND_ZONES.filter(z => !play.banned.includes(z.id));
       const aliveNpcs = play.players.filter(p => p.is_npc && p.alive);
       const lateGame = safe.length <= 10;
@@ -2556,10 +3880,10 @@ function startGameLoops() {
 
         const coPresent = play.players.filter(p => p.alive && p.zone === dest && p.id !== npc.id && p.name !== partnerName);
         if (coPresent.length > 0) {
-          const fightChance = lateGame ? 0.34 : 0.12;
+          const fightChance = lateGame ? 0.22 : 0.07;
           if (Math.random() < fightChance) {
             const victim = coPresent[Math.floor(Math.random() * coPresent.length)];
-            const dmg = lateGame ? (4 + Math.floor(Math.random() * 5)) : (2 + Math.floor(Math.random() * 3));
+            const dmg = lateGame ? (3 + Math.floor(Math.random() * 4)) : (2 + Math.floor(Math.random() * 2));
             const nextHp = Math.max(0, (victim.hp || 15) - dmg);
             victim.hp = nextHp;
             const factionTag = partner ? `[${npc.name}·${partner.name} 동맹]` : npc.name;
@@ -2569,6 +3893,8 @@ function startGameLoops() {
               await sb.from('room_players').update({ hp: 0, alive: false }).eq('id', victim.id);
               const remCnt = Math.max(1, play.players.filter(p => p.alive).length + (play.me.alive ? 0 : 1));
               const news = `[속보] ${victim.name}이(가) ${factionTag}과의 교전 끝에 사망했습니다. (생존 ${remCnt}명)`;
+              sfx.beep();
+              setMarqueeAlert(`${victim.name} 사망!! (생존 ${remCnt}명)`);
               await sb.from('room_messages').insert([{
                 room_code: play.code, sender: 'SYS', zone: 'all', msg_type: 'sys', content: news
               }]);
@@ -2579,6 +3905,8 @@ function startGameLoops() {
               await sb.from('room_players').update({ hp: nextHp }).eq('id', victim.id);
               if (victim.id === play.pid && play.me.alive && !modalState.mode && Math.random() < 0.55) {
                 openEncounterModal(npc.id, partner ? `${npc.name}·${partner.name} 동맹` : '');
+              } else if (play.me.alive && !isSleepingNow && !modalState.mode && victim.zone === play.me.zone && !victim.is_npc === false && Math.random() < 0.25) {
+                openRescueModal(npc.id, victim.name);
               }
             }
           }
@@ -2586,8 +3914,9 @@ function startGameLoops() {
       }
     }
 
-    // NPC끼리 같은 구역에 있을 때 자체 동맹 결성 + 구역 내 NPC 간 대화 & 먼저 건네는 한마디 (라벨 딱지 없이 채팅창에 자연스럽게 출력)
-    if (play.host && Math.random() < 0.14) {
+    // 초반(1~2일차)에는 NPC 동맹을 거의 억제하고 3일차 이후부터만 천천히 결성
+    const npcAllianceProb = play.day >= 3 ? (play.day >= 5 ? 0.08 : 0.03) : 0.004;
+    if (play.host && Math.random() < npcAllianceProb) {
       const soloNpcs = play.players.filter(p => p.is_npc && p.alive && !getNpcAllyPairName(p.name) && p.name !== play.me.allyName);
       if (soloNpcs.length >= 2) {
         const a = soloNpcs[Math.floor(Math.random() * soloNpcs.length)];
@@ -2602,10 +3931,9 @@ function startGameLoops() {
       }
     }
 
-    if (play.me.alive && !modalState.mode && Math.random() < 0.24) {
+    if (play.me.alive && !isSleepingNow && !modalState.mode && Math.random() < (1 / 240)) {
       const hereNpcs = play.players.filter(p => p.is_npc && p.alive && p.zone === play.me.zone);
-      if (hereNpcs.length >= 2 && Math.random() < 0.58) {
-        // 같은 구역 NPC 둘의 대화 엿듣기
+      if (hereNpcs.length >= 2 && Math.random() < 0.55) {
         const n1 = hereNpcs[Math.floor(Math.random() * hereNpcs.length)];
         const others = hereNpcs.filter(x => x.id !== n1.id);
         const n2 = others[Math.floor(Math.random() * others.length)];
@@ -2617,21 +3945,20 @@ function startGameLoops() {
           const pairLines = convs[Math.floor(Math.random() * convs.length)];
           pushDialogueToChat(pa, pairLines[0], { zone: play.me.zone, showAll: false });
           setTimeout(() => {
-            if (!play.finished && play.me.zone === n1.zone) {
+            if (!play.finished && play.me.alive && play.me.zone === n1.zone) {
               pushDialogueToChat(pb, pairLines[1], { zone: play.me.zone, showAll: false });
             }
-          }, 900);
+          }, 950);
         } else {
           const gLines = PAIR_CHATTER_DATA.zoneGeneric[Math.floor(Math.random() * PAIR_CHATTER_DATA.zoneGeneric.length)];
           pushDialogueToChat(n1.name, gLines[0], { zone: play.me.zone, showAll: false });
           setTimeout(() => {
-            if (!play.finished && play.me.zone === n1.zone) {
+            if (!play.finished && play.me.alive && play.me.zone === n1.zone) {
               pushDialogueToChat(n2.name, gLines[1], { zone: play.me.zone, showAll: false });
             }
-          }, 900);
+          }, 950);
         }
       } else if (hereNpcs.length > 0) {
-        // NPC가 먼저 말을 건네는 대사 ('선제 대화' 딱지 없이 이름+하트만 표시)
         const speaker = hereNpcs[Math.floor(Math.random() * hereNpcs.length)];
         const pts = getAffinityPoints(speaker.name);
         const hearts = getAffinity(speaker.name);
@@ -2642,6 +3969,17 @@ function startGameLoops() {
         else idx = Math.floor(Math.random() * 3);
         const say = getNpcScriptLine(speaker.name, idx, speaker.line || '…');
         pushDialogueToChat(`${speaker.name} (${renderHearts(hearts)})`, say, { zone: play.me.zone, showAll: false });
+      }
+    }
+
+    const aliveNowForProvoke = Math.max(1, play.players.filter(p => p.alive).length + (play.me.alive ? 0 : 1));
+    const lateSparseBoost = aliveNowForProvoke <= 14 ? 0.025 : 0;
+    const dayScale = play.day >= 2 ? Math.min(0.07, 0.015 + (play.day - 2) * 0.015 + lateSparseBoost) : 0;
+    if (play.day >= 2 && play.me.alive && !isSleepingNow && !modalState.mode && Math.random() < dayScale) {
+      const bullies = play.players.filter(p => p.is_npc && p.alive && p.zone === play.me.zone && p.name !== play.me.allyName);
+      if (bullies.length > 0) {
+        const bNpc = bullies[Math.floor(Math.random() * bullies.length)];
+        openProvokeModal(bNpc.id);
       }
     }
 
@@ -2810,20 +4148,22 @@ function drawIslandMap() {
   cx.restore();
 }
 
-async function onIslandClick(ev) {
-  if (!play.me.alive || play.finished || play.actionSec > 0 || play.paused) return;
-  const cv = document.getElementById('islandCanvas');
-  const rect = cv.getBoundingClientRect();
-  const mx = (ev.clientX - rect.left) * (460 / (rect.width || 460));
-  const my = (ev.clientY - rect.top) * (244 / (rect.height || 244));
 
-  let nearest = null, bestDist = 22;
-  ISLAND_ZONES.forEach(z => {
-    const dist = Math.hypot(z.x - mx, z.y - my);
-    if (dist < bestDist) { bestDist = dist; nearest = z; }
-  });
+function cancelCurrentAction() {
+  if (play.actionTimer) {
+    clearInterval(play.actionTimer);
+    play.actionTimer = null;
+  }
+  play.actionKind = null;
+  play.actionTargetZone = null;
+  play.actionSec = 0;
+  appendGameLog(`[${fmtClock()}] 현재 행동을 취소했다.`, true);
+  refreshGameUI();
+}
 
+async function startMoveToZone(nearest) {
   if (!nearest || nearest.id === play.me.zone) return;
+  if (!play.me.alive || play.finished || play.actionSec > 0 || play.paused) return;
   if (play.banned.includes(nearest.id)) {
     await appendGameLog(`[${fmtClock()}] ${nearest.name} 구역은 폐쇄되어 진입할 수 없다.`, true);
     return;
@@ -2852,7 +4192,7 @@ async function onIslandClick(ev) {
 
       const c = getPickedChar();
       const agi = c ? (c.agi || 1) : 1;
-      const hungerLoss = Math.max(1, 4 - Math.floor(agi / 2));
+      const hungerLoss = Math.max(1, 2 - Math.floor(agi / 3));
       play.me.zone = destId;
       play.me.hunger = Math.max(0, play.me.hunger - hungerLoss);
       if (play.me.hunger < 30 && play.me.condition === '양호') play.me.condition = '굶주림';
@@ -2864,6 +4204,24 @@ async function onIslandClick(ev) {
       }
 
       const zObj = ISLAND_ZONES.find(z => z.id === destId);
+      const myNameNow = c ? c.name : '실험체';
+      const triggeredIdx = plantedMines.findIndex(mItem =>
+        mItem.zoneId === destId &&
+        mItem.ownerName !== myNameNow &&
+        mItem.allyName !== myNameNow &&
+        mItem.ownerName !== play.me.allyName
+      );
+      if (triggeredIdx >= 0) {
+        const mineObj = plantedMines.splice(triggeredIdx, 1)[0];
+        const mDmg = mineObj.dmg || 3;
+        play.me.hp = Math.max(0, play.me.hp - mDmg);
+        await appendGameLog(`[${fmtClock()}] 【지뢰 폭발】 ${zObj ? zObj.name : destId} 구역에서 지뢰를 밟았다! HP -${mDmg}`, true);
+        if (play.me.hp === 0) {
+          if (play.pid) await sb.from('room_players').update({ zone: destId, hp: 0, alive: false }).eq('id', play.pid);
+          await handleMeDead('지뢰 폭발');
+          return;
+        }
+      }
       if (play.pid) {
         await sb.from('room_players').update({ zone: destId, hp: play.me.hp, alive: play.me.alive }).eq('id', play.pid);
       }
@@ -2873,24 +4231,6 @@ async function onIslandClick(ev) {
       drawIslandMap();
 
       setChatTab(chatTabMode);
-      const hereGroup = play.players.filter(p => p.is_npc && p.alive && p.zone === destId);
-      if (hereGroup.length >= 2) {
-        const g1 = hereGroup[0], g2 = hereGroup[1];
-        const pEntry = PAIR_CHATTER_DATA.paired.find(([a, b]) =>
-          (a === g1.name && b === g2.name) || (a === g2.name && b === g1.name)
-        );
-        const lines = pEntry
-          ? pEntry[2][Math.floor(Math.random() * pEntry[2].length)]
-          : PAIR_CHATTER_DATA.zoneGeneric[Math.floor(Math.random() * PAIR_CHATTER_DATA.zoneGeneric.length)];
-        const spA = pEntry ? pEntry[0] : g1.name;
-        const spB = pEntry ? pEntry[1] : g2.name;
-        pushDialogueToChat(spA, lines[0], { zone: destId, showAll: false });
-        setTimeout(() => {
-          if (!play.finished && play.me.zone === destId) {
-            pushDialogueToChat(spB, lines[1], { zone: destId, showAll: false });
-          }
-        }, 850);
-      }
       const someoneHere = play.players.find(p => p.alive && p.zone === destId && p.id !== play.pid);
       if (someoneHere && Math.random() < 0.45) {
         const pairName = getNpcAllyPairName(someoneHere.name);
@@ -2901,18 +4241,51 @@ async function onIslandClick(ev) {
   }, 1000);
 }
 
+async function onIslandClick(ev) {
+  if (!play.me.alive || play.finished || play.actionSec > 0 || play.paused) return;
+  const cv = document.getElementById('islandCanvas');
+  const rect = cv.getBoundingClientRect();
+  const mx = (ev.clientX - rect.left) * (460 / (rect.width || 460));
+  const my = (ev.clientY - rect.top) * (244 / (rect.height || 244));
+
+  let nearest = null, bestDist = 34;
+  ISLAND_ZONES.forEach(z => {
+    const dist = Math.hypot(z.x - mx, z.y - my);
+    if (dist < bestDist) { bestDist = dist; nearest = z; }
+  });
+
+  if (!nearest || nearest.id === play.me.zone) return;
+  await startMoveToZone(nearest);
+}
+
 function pickZoneLootItem(zoneId) {
   const z = ISLAND_ZONES.find(x => x.id === zoneId);
   const nameList = (z && z.pool && z.pool.length) ? z.pool : LOOT_ITEMS.map(i => i.name);
-  const chosenName = nameList[Math.floor(Math.random() * nameList.length)];
+  const weighted = [];
+  nameList.forEach(nm => {
+    const isRare = nm.startsWith('★');
+    const weight = isRare ? 1 : 4;
+    for (let k = 0; k < weight; k++) weighted.push(nm);
+  });
+  const chosenName = weighted[Math.floor(Math.random() * weighted.length)] || nameList[0];
   const found = LOOT_ITEMS.find(i => i.name === chosenName) || LOOT_ITEMS[0];
   return { ...found };
 }
 
-function actRefSearch() {
+async function actRefSearch() {
   if (!play.me.alive || play.finished || play.actionSec > 0) return;
+  const hNow = Math.floor((play.minutes % 1440) / 60);
+  const isNightNow = !(hNow >= 6 && hNow < 18);
+  const hasFlashlight = play.me.bag.some(it => it.name === '손전등');
+
+  if (isNightNow && !hasFlashlight) {
+    await appendGameLog(`[${fmtClock()}] 너무 어둡다. 손전등 없이는 밤에 탐색할 수 없다.`, true);
+    pushDialogueToChat('기록', '사방이 너무 어둡다… 손전등 없이는 주변을 살필 수가 없다.', { zone: play.me.zone, showAll: false });
+    return;
+  }
+
   const c = getPickedChar();
-  const baseSec = (play.me.condition === '부상' || play.me.condition === '피로') ? 10 : 8;
+  const baseSec = (play.me.condition === '부상' || play.me.condition === '피로') ? 12 : 10;
   play.actionKind = 'search';
   play.actionSec = Math.max(5, baseSec - Math.floor(((c?.agi || 1) - 1) / 2));
   refreshGameUI();
@@ -2930,51 +4303,57 @@ function actRefSearch() {
       play.actionSec = 0;
 
       const luk = c ? (c.luk || 1) : 1;
-      play.me.hunger = Math.max(0, play.me.hunger - 4);
+      play.me.hunger = Math.max(0, play.me.hunger - 2);
       if (play.me.hunger < 30 && play.me.condition === '양호') play.me.condition = '굶주림';
-      const successProb = Math.min(0.95, 0.70 + (luk - 1) * 0.06);
+      const astroBonus = (c && c.club === '천문부') ? 0.12 : 0;
+      const successProb = Math.min(0.92, 0.60 + (luk - 1) * 0.05 + astroBonus);
 
       if (Math.random() < successProb) {
-        const picked = pickZoneLootItem(play.me.zone);
+        const floorArr = zoneDroppedItems[play.me.zone];
+        const fromFloor = (floorArr && floorArr.length > 0);
+        const picked = fromFloor ? floorArr.shift() : pickZoneLootItem(play.me.zone);
         if (play.me.bag.length < play.me.maxBag) {
           play.me.bag.push(picked);
-          await appendGameLog(`[${fmtClock()}] 탐색 완료: '${picked.name}'을(를) 획득했다.`);
+          sfx.loot();
+          const srcTag = fromFloor ? '바닥에 떨어진 ' : '';
+          const astroTag = (c && c.club === '천문부') ? ' [천문부 특기 발동: 탐색 행운 보정]' : '';
+          await appendGameLog(`[${fmtClock()}] 탐색 완료: ${srcTag}'${picked.name}'을(를) 획득했다.${astroTag}`);
         } else {
-          await appendGameLog(`[${fmtClock()}] 가방이 가득 차 '${picked.name}'을(를) 두고 왔다.`, true);
+          if (!zoneDroppedItems[play.me.zone]) zoneDroppedItems[play.me.zone] = [];
+          zoneDroppedItems[play.me.zone].push(picked);
+          await appendGameLog(`[${fmtClock()}] 가방이 가득 차 '${picked.name}'을(를) 바닥에 두고 왔다.`, true);
         }
       } else {
         await appendGameLog(`[${fmtClock()}] 주변을 뒤졌지만 유용한 물건을 찾지 못했다.`);
       }
+
+      if (play.me.allyName && play.me.bag.length < play.me.maxBag && Math.random() < 0.28) {
+        const giftPool = LOOT_ITEMS.filter(x => x.type === 'food' || x.type === 'heal' || x.name === '지뢰');
+        const giftItem = { ...(giftPool[Math.floor(Math.random() * giftPool.length)] || LOOT_ITEMS[0]) };
+        play.me.bag.push(giftItem);
+        sfx.loot();
+        await appendGameLog(`[${fmtClock()}] 동료 ${play.me.allyName}이(가) 탐색 중 '${giftItem.name}'을(를) 찾아 건네주었다.`, true);
+        pushDialogueToChat(play.me.allyName, `이거 내가 찾았어. 네가 챙겨 둬 — '${giftItem.name}'.`, { zone: play.me.zone, showAll: false });
+      }
+
       refreshGameUI();
     }
   }, 1000);
 }
 
+let isSleepingNow = false;
+let sleepHealCarry = 0;
+
 async function actRefSleep() {
   if (!play.me.alive || play.finished || play.actionSec > 0) return;
-  const beforeH = Math.floor((play.minutes % 1440) / 60);
-  const wasNight = !(beforeH >= 6 && beforeH < 18);
-
-  play.minutes += 60;
-  while (play.minutes >= 1440) { play.minutes -= 1440; play.day++; }
-
-  if (wasNight) {
-    play.nightSleepMinutes = Math.min(180, (play.nightSleepMinutes || 0) + 60);
+  isSleepingNow = !isSleepingNow;
+  if (isSleepingNow) {
+    const guardMsg = play.me.allyName ? ` · 동료 ${play.me.allyName} 불침번 중` : '';
+    await appendGameLog(`[${fmtClock()}] 잠자리에 들었다. 실제 시간이 흐르며 수면과 체력이 누적된다.${guardMsg}`, true);
+  } else {
+    await appendGameLog(`[${fmtClock()}] 잠에서 깨어났다.`, true);
   }
-
-  play.me.hp = Math.min(play.me.maxHp, play.me.hp + 2);
-  if (play.nightSleepMinutes >= 180 && play.me.condition === '피로') {
-    play.me.condition = '양호';
-  }
-  if (play.pid) await sb.from('room_players').update({ hp: play.me.hp }).eq('id', play.pid);
-
-  const sleepStatus = wasNight
-    ? ` (밤 수면 ${Math.floor(play.nightSleepMinutes / 60)}/3시간)`
-    : '';
-  const guardMsg = play.me.allyName ? ` · ${play.me.allyName}의 불침번 아래 휴식` : '';
-  await appendGameLog(`[${fmtClock()}] 잠시 눈을 붙였다. HP +2 회복${sleepStatus}${guardMsg}.`);
   refreshGameUI();
-  drawIslandMap();
 }
 
 async function actRefSuicide() {
@@ -2995,6 +4374,7 @@ async function handleMeDead(reason) {
   if (play.pid) {
     await sb.from('room_players').update({ hp: 0, alive: false }).eq('id', play.pid);
   }
+  sfx.death();
   await appendGameLog(`[${fmtClock()}] 【사망】 ${reason}(으)로 사망했습니다.`, true);
   const remCnt = Math.max(0, play.players.filter(p => p.alive && p.id !== play.pid).length);
   await sb.from('room_messages').insert([{
@@ -3137,13 +4517,15 @@ async function useBagItem(idx) {
       play.me.condition = '양호';
     }
     if (play.pid) await sb.from('room_players').update({ hp: play.me.hp }).eq('id', play.pid);
-    await appendGameLog(`[${fmtClock()}] '${it.name}' 사용 (HP ${play.me.hp}/${play.me.maxHp}, 상태: ${play.me.condition})`);
+    const healTag = (c && c.club === '보건부') ? ' [보건부 특기 발동: 치료량 2배]' : '';
+    await appendGameLog(`[${fmtClock()}] '${it.name}' 사용 (HP ${play.me.hp}/${play.me.maxHp}, 상태: ${play.me.condition})${healTag}`);
     play.me.bag.splice(idx, 1);
   } else if (it.type === 'food') {
     const bonus = (c && c.club === '요리부') ? 15 : 0;
     play.me.hunger = Math.min(100, play.me.hunger + it.val + bonus);
     if (play.me.hunger >= 30 && play.me.condition === '굶주림') play.me.condition = '양호';
-    await appendGameLog(`[${fmtClock()}] '${it.name}' 섭취 (허기 ${play.me.hunger}/100)`);
+    const foodTag = (c && c.club === '요리부') ? ' [요리부 특기 발동: 허기 회복 +15]' : '';
+    await appendGameLog(`[${fmtClock()}] '${it.name}' 섭취 (허기 ${play.me.hunger}/100)${foodTag}`);
     play.me.bag.splice(idx, 1);
   } else if (it.type === 'weapon') {
     play.me.weapon = {
@@ -3151,9 +4533,70 @@ async function useBagItem(idx) {
       atk: it.atk + (str - 1),
       kind: it.kind || '근접',
       dura: it.dura ?? 6,
-      maxDura: it.maxDura ?? 6
+      maxDura: it.maxDura ?? 6,
+      bagIdx: idx
     };
-    await appendGameLog(`[${fmtClock()}] '${it.name}' 장착 (공격력 ${play.me.weapon.atk})`);
+    await appendGameLog(`[${fmtClock()}] '${it.name}' 장착 (공격력 ${play.me.weapon.atk}, 내구 ${play.me.weapon.dura}/${play.me.weapon.maxDura})`);
+  } else if (it.type === 'repair') {
+    if (play.me.weapon && play.me.weapon.dura != null) {
+      const addD = it.val || 3;
+      play.me.weapon.dura = Math.min(play.me.weapon.maxDura, play.me.weapon.dura + addD);
+      const eqIdx = play.me.bag.findIndex(b => b.type === 'weapon' && b.name === play.me.weapon.name);
+      if (eqIdx >= 0 && play.me.bag[eqIdx]) {
+        play.me.bag[eqIdx].dura = play.me.weapon.dura;
+        play.me.bag[eqIdx].desc = `공격력 ${play.me.bag[eqIdx].atk} (${play.me.bag[eqIdx].kind || '근접'}) · 내구 ${play.me.weapon.dura}/${play.me.weapon.maxDura}`;
+      }
+      play.me.bag.splice(idx, 1);
+      await appendGameLog(`[${fmtClock()}] '${it.name}' 사용: '${play.me.weapon.name}' 내구도 ${play.me.weapon.dura}/${play.me.weapon.maxDura} 회복.`, true);
+    } else {
+      await appendGameLog(`[${fmtClock()}] 수리할 무기를 먼저 장착해야 한다.`, true);
+    }
+  } else if (it.type === 'armor') {
+    play.me.shield = (play.me.shield || 0) + (it.shield || 2);
+    play.me.bag.splice(idx, 1);
+    await appendGameLog(`[${fmtClock()}] '${it.name}' 착용! 피해 경감 보호막 +${it.shield || 2} (현재 보호 ${play.me.shield})`, true);
+  } else if (it.type === 'fishing') {
+    const waterZones = ['west_coast', 'south_coast', 'pier', 'reservoir', 'fishing_village'];
+    if (!waterZones.includes(play.me.zone)) {
+      await appendGameLog(`[${fmtClock()}] 물가(해변·선착장·저수지·어촌)에서만 낚싯대를 쓸 수 있다.`, true);
+    } else {
+      it.uses = (it.uses ?? 5) - 1;
+      it.desc = `★ 희귀 · 물가에서 물고기 획득 (${it.uses}회 남음)`;
+      if (it.uses <= 0) play.me.bag.splice(idx, 1);
+      if (play.me.bag.length < play.me.maxBag) {
+        play.me.bag.push({ name: '구운 생선', type: 'food', val: 34, desc: '허기 +34 · 낚시로 잡은 생선' });
+        await appendGameLog(`[${fmtClock()}] 낚시 성공! '구운 생선'을 획득했다.`, true);
+      } else {
+        await appendGameLog(`[${fmtClock()}] 물고기를 낚았지만 가방이 가득 찼다.`, true);
+      }
+    }
+  } else if (it.type === 'binocular') {
+    const curZ = ISLAND_ZONES.find(z => z.id === play.me.zone);
+    const adjIds = (curZ && curZ.edges) ? curZ.edges : [];
+    const spotted = [];
+    adjIds.forEach(aid => {
+      const zName = ISLAND_ZONES.find(z => z.id === aid)?.name || aid;
+      const cnt = play.players.filter(p => p.alive && p.zone === aid && p.id !== play.pid).length;
+      spotted.push(`${zName}(${cnt}명)`);
+    });
+    await appendGameLog(`[${fmtClock()}] 【쌍안경 정찰】 인접 구역 인원: ${spotted.join(', ') || '없음'}`, true);
+  } else if (it.type === 'bag_expand') {
+    const inc = it.addSlots || 2;
+    play.me.maxBag = (play.me.maxBag || 8) + inc;
+    play.me.bag.splice(idx, 1);
+    await appendGameLog(`[${fmtClock()}] '${it.name}' 사용! 가방 최대 용량이 ${play.me.maxBag}칸으로 늘었다.`, true);
+  } else if (it.type === 'mine') {
+    plantedMines.push({
+      zoneId: play.me.zone,
+      ownerName: c ? c.name : '실험체',
+      allyName: play.me.allyName || null,
+      dmg: it.dmg || 3
+    });
+    play.me.bag.splice(idx, 1);
+    const zName = ISLAND_ZONES.find(z => z.id === play.me.zone)?.name || play.me.zone;
+    await appendGameLog(`[${fmtClock()}] ${zName} 구역에 '${it.name}'을(를) 설치했다. (본인·동료는 안전)`, true);
+  } else if (it.type === 'gear') {
+    await appendGameLog(`[${fmtClock()}] '${it.name}'은(는) 가방에 소지하고 있으면 밤 탐색에 쓰인다.`, true);
   }
   refreshGameUI();
 }
@@ -3163,21 +4606,49 @@ async function dropBagItem(idx) {
   const it = play.me.bag[idx];
   if (!it) return;
   play.me.bag.splice(idx, 1);
-  await appendGameLog(`[${fmtClock()}] '${it.name}'을(를) 버렸다.`);
+  if (!zoneDroppedItems[play.me.zone]) zoneDroppedItems[play.me.zone] = [];
+  zoneDroppedItems[play.me.zone].push({ ...it });
+  await appendGameLog(`[${fmtClock()}] '${it.name}'을(를) 바닥에 내려놓았다.`);
   refreshGameUI();
 }
 
 function talkNearNpc(npcName) {
   const npc = NPC_ROSTER.find(n => n.name === npcName);
+  const c = getPickedChar();
+  const isDrama = (c && c.club === '연극부');
   const pts = getAffinityPoints(npcName);
   const cnt = (bondStreakMap[npcName] || 0);
   bondStreakMap[npcName] = cnt + 1;
+
+  const ignoreRoll = Math.random();
+  if (!isDrama && pts < 45) {
+    if (ignoreRoll < 0.24) {
+      const res = gainAffinityPoints(npcName, -2);
+      pushDialogueToChat(`${npcName} (${renderHearts(res.hearts)})`, '…들릴 텐데, 지금 말 걸 기분 아니야. 건드리지 마.', { zone: play.me.zone });
+      return;
+    } else if (ignoreRoll < 0.44) {
+      const res = gainAffinityPoints(npcName, -1);
+      pushDialogueToChat(`${npcName} (${renderHearts(res.hearts)})`, '잠깐만, 나 지금 다른 데 가 봐야 해서. 나중에 얘기해.', { zone: play.me.zone });
+      const row = play.players.find(p => p.is_npc && p.alive && p.name === npcName);
+      const openZones = ISLAND_ZONES.filter(z => z.id !== play.me.zone && !play.banned.includes(z.id));
+      if (row && openZones.length > 0) {
+        const nextZ = openZones[Math.floor(Math.random() * openZones.length)];
+        row.zone = nextZ.id;
+        sb.from('room_players').update({ zone: nextZ.id }).eq('id', row.id);
+        refreshGameUI();
+      }
+      return;
+    }
+  }
+
   let idx = cnt % 3;
-  if (pts >= 65) idx = 6 + (cnt % 3);
-  else if (pts >= 35) idx = 5 + (cnt % 2);
+  if (pts >= 70) idx = 6 + (cnt % 3);
+  else if (pts >= 40) idx = 5 + (cnt % 2);
   const chosen = getNpcScriptLine(npcName, idx, npc ? npc.line : '조심해.');
-  const res = gainAffinityPoints(npcName, 3);
+  const gainAmt = isDrama ? 2 : 1;
+  const res = gainAffinityPoints(npcName, gainAmt);
   pushDialogueToChat(`${npcName} (${renderHearts(res.hearts)})`, chosen, { zone: play.me.zone });
+  refreshGameUI();
 }
 
 function bindGameRealtime() {
@@ -3227,9 +4698,9 @@ function refreshGameUI() {
   document.getElementById('refCloseBanner').textContent = fmtCloseRemain();
 
   if (play.actionKind === 'move' && targetObj) {
-    document.getElementById('refLocTag').textContent = `이동 중 → ${targetObj.name} (${play.actionSec}초)`;
+    document.getElementById('refLocTag').innerHTML = `이동 중 → ${esc(targetObj.name)} (${play.actionSec}초) <button type="button" class="ref-mini-btn" onclick="event.stopPropagation();cancelCurrentAction()">취소</button>`;
   } else if (play.actionKind === 'search') {
-    document.getElementById('refLocTag').textContent = `위치: ${zoneObj.name} (탐색 ${play.actionSec}초)`;
+    document.getElementById('refLocTag').innerHTML = `위치: ${esc(zoneObj.name)} (탐색 ${play.actionSec}초) <button type="button" class="ref-mini-btn" onclick="event.stopPropagation();cancelCurrentAction()">취소</button>`;
   } else {
     document.getElementById('refLocTag').textContent = `위치: ${zoneObj.name}`;
   }
@@ -3278,7 +4749,7 @@ function refreshGameUI() {
   const bagEl = document.getElementById('refBagList');
   bagEl.innerHTML = '';
   m.bag.forEach((it, idx) => {
-    const actLabel = it.type === 'food' ? '먹기' : (it.type === 'weapon' ? '장착' : '사용');
+    const actLabel = it.type === 'food' ? '먹기' : (it.type === 'weapon' ? '장착' : (it.type === 'bag_expand' ? '확장' : (it.type === 'mine' ? '설치' : (it.type === 'gear' ? '휴대중' : '사용'))));
     const row = document.createElement('div');
     row.className = 'ref-bag-item';
     row.innerHTML = `
@@ -3313,8 +4784,10 @@ function refreshGameUI() {
   const locked = !m.alive || play.finished || play.paused;
   const btnSearch = document.getElementById('refBtnSearch');
   btnSearch.disabled = locked || play.actionSec > 0;
-  btnSearch.textContent = play.actionKind === 'search' ? `탐색 중 (${play.actionSec}초)` : '탐색 (8초)';
-  document.getElementById('refBtnSleep').disabled = locked || play.actionSec > 0;
+  btnSearch.textContent = play.actionKind === 'search' ? `탐색 중 (${play.actionSec}초)` : '탐색 (10초)';
+  const btnSleep = document.getElementById('refBtnSleep');
+  btnSleep.disabled = (!m.alive || play.finished || play.actionSec > 0) && !isSleepingNow;
+  btnSleep.textContent = isSleepingNow ? '잠에서 깨기' : '잠자기';
   document.getElementById('refBtnSuicide').disabled = !m.alive || play.finished || !m.weapon || m.weapon.name === '맨손';
 
   const nearEl = document.getElementById('refNearList');
@@ -3326,11 +4799,13 @@ function refreshGameUI() {
     hereList.forEach(p => {
       const npcMeta = NPC_ROSTER.find(n => n.name === p.name);
       const isAlly = m.allyName === p.name;
+      const isDramaClub = (c && c.club === '연극부');
+      const traitPart = (isDramaClub && npcMeta?.trait) ? ` · 성격 ${npcMeta.trait}` : '';
       const div = document.createElement('div');
       div.className = 'ref-near-entry';
       div.innerHTML = `
         <div class="ref-near-name">${esc(p.name)} <span style="font-size:10px;color:#8eb8ff;">HP ${p.hp}</span></div>
-        <div class="ref-near-sub">${esc(p.club || '참가자')} · ${esc(npcMeta ? npcMeta.trait : '생존자')} <span class="ref-hearts-dark">${renderHearts(getAffinity(p.name))}</span></div>
+        <div class="ref-near-sub">${esc(p.club || '참가자')}${esc(traitPart)} <span class="ref-hearts-dark">${renderHearts(getAffinity(p.name))}</span></div>
         <div class="ref-near-btns">
           <button type="button" class="ref-mini-btn" ${locked ? 'disabled' : ''} onclick="talkNearNpc('${esc(p.name)}')">대화</button>
           <button type="button" class="ref-mini-btn" ${locked ? 'disabled' : ''} onclick="interactNearNpc('${esc(p.name)}', false)">${isAlly ? '메뉴' : '교류'}</button>
