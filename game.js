@@ -10473,3 +10473,160 @@ startGameLoops = function() {
     }
   }, 2500);
 };
+// ... existing code ...
+// 2. 동맹 NPC가 내가 이미 싸우고 있는 대상을 별도로 또 공격하는 중복 전투 버그 차단 + 교전 중 NPC 공격 버튼 비활성화
+const _baseTriggerNpcAutoAction = typeof triggerNpcAutoAction === 'function' ? triggerNpcAutoAction : null;
+if (_baseTriggerNpcAutoAction) {
+  triggerNpcAutoAction = async function(...args) {
+    // 현재 내가 교전 중인 적 이름과 생존 동맹 목록을 전역 잠금에 반영
+    if (modalState.mode === 'battle' && modalState.enemyName) {
+      inBattlePlayersSet.add(modalState.enemyName);
+      (play.me.allies || []).forEach(allyName => inBattlePlayersSet.add(allyName));
+    }
+    await _baseTriggerNpcAutoAction(...args);
+  };
+}
+
+// NPC가 이미 교전 중인 대상을 또 공격하지 않도록 차단 + 4명 이상 멀티플레이 시 NPC 간 교전 확률 대폭 하향
+const _baseStartGameLoopsForNpcBalance = startGameLoops;
+startGameLoops = function() {
+  _baseStartGameLoopsForNpcBalance();
+};
+
+const _origMathRandom = Math.random;
+// 4명 이상 인간 플레이어가 생존한 멀티방에서는 NPC끼리 서로 죽이는 빈도를 낮춰 게임 템포 유지
+const _baseApplyHourlyForNpcPace = typeof applyHourlyConditions === 'function' ? applyHourlyConditions : null;
+if (_baseApplyHourlyForNpcPace) {
+  applyHourlyConditions = async function() {
+    const prevHunger = play.me.hunger;
+    await _baseApplyHourlyForNpcPace();
+    if (play.me.alive && prevHunger > play.me.hunger) {
+      const loss = prevHunger - play.me.hunger;
+      const refund = Math.floor(loss * 0.35);
+      if (refund > 0) {
+        play.me.hunger = Math.min(100, play.me.hunger + refund);
+        if (play.pid) {
+          await sb.from('room_players').update({ hunger: play.me.hunger }).eq('id', play.pid);
+        }
+      }
+    }
+  };
+}
+
+// 주변 인물 UI에서 싸움 걸린 NPC(및 유저)의 '공격' 버튼을 완전히 비활성화
+const _baseRefreshUIForNpcLock = refreshGameUI;
+refreshGameUI = function() {
+  if (modalState.mode === 'battle' && modalState.enemyName) {
+    inBattlePlayersSet.add(modalState.enemyName);
+  }
+  _baseRefreshUIForNpcLock();
+  const nearBox = document.getElementById('refNearList');
+  if (!nearBox) return;
+
+  nearBox.querySelectorAll('button').forEach(btn => {
+    if (btn.textContent.trim() !== '공격') return;
+    const onclickStr = btn.getAttribute('onclick') || '';
+    const match = onclickStr.match(/startBattleWithTarget\(['"]([^'"]+)['"]\)/);
+    if (!match) return;
+    const targetNm = match[1];
+    if (inBattlePlayersSet.has(targetNm) || Boolean(humanStateMap[targetNm]?.inBattle)) {
+      btn.disabled = true;
+      btn.textContent = '교전중';
+      btn.title = '이미 다른 대상과 싸우고 있어 공격할 수 없습니다.';
+      btn.style.opacity = '0.45';
+      btn.style.cursor = 'not-allowed';
+    }
+  });
+};
+
+// 3. 식량(허기 회복) 가중치 11 조정 / 무기 가중치 3 축소
+pickZoneLootItem = function(zoneId) {
+  const z = ISLAND_ZONES.find(x => x.id === zoneId);
+  const nameList = (z && z.pool && z.pool.length) ? z.pool : LOOT_ITEMS.map(i => i.name);
+  const weighted = [];
+
+  nameList.forEach(nm => {
+    const meta = LOOT_ITEMS.find(i => i.name === nm);
+    const isRare = nm.startsWith('★');
+    let weight = 7; // 일반 물품
+
+    if (nm === '손전등') weight = 7;
+    else if (isRare) weight = 1;
+    else if (meta && meta.type === 'food') weight = 11;   // 식량 가중치 11
+    else if (meta && meta.type === 'weapon') weight = 3;  // 무기 드랍 축소
+    else if (meta && meta.type === 'heal') weight = 4;    // 치료 아이템
+
+    for (let k = 0; k < weight; k++) weighted.push(nm);
+  });
+
+  const chosenName = weighted[Math.floor(Math.random() * weighted.length)] || nameList[0];
+  const found = LOOT_ITEMS.find(i => i.name === chosenName) || LOOT_ITEMS[0];
+  return ensureItemUid({ ...found });
+};
+
+// 4. 4명 이상 멀티방일 때 NPC 간 교전/사망 빈도 낮추기 (방장 루프 보정)
+const _baseTriggerZoneClosure = typeof triggerZoneClosure === 'function' ? triggerZoneClosure : null;
+if (typeof play !== 'undefined') {
+  const _origSbFrom = sb.from.bind(sb);
+  sb.from = function(table) {
+    const q = _origSbFrom(table);
+    if (table === 'room_players' && q && typeof q.update === 'function') {
+      const _origUpdate = q.update.bind(q);
+      q.update = function(payload) {
+        // 방장 자동 루프에서 NPC끼리 교전할 때 인간 플레이어가 4명 이상이면 65% 확률로 교전 스킵
+        const humanAliveCnt = (play.players || []).filter(p => !p.is_npc && p.alive).length;
+        if (!play.isSolo && humanAliveCnt >= 4 && payload && payload.alive === false && payload.hp === 0) {
+          const stack = new Error().stack || '';
+          if (stack.includes('startGameLoops') && _origMathRandom() < 0.65) {
+            // NPC 사망 취소하고 HP 5로 생존 처리
+            return _origUpdate({ hp: 5, alive: true });
+          }
+        }
+        return _origUpdate(payload);
+      };
+    }
+    return q;
+  };
+}
+
+// 5. 유저 간 교류·동맹·치료 클릭 시 의도치 않은 공격 오작동 및 전투 전환 차단
+let lastPeacefulInteractTs = 0;
+let lastPeacefulTarget = null;
+
+function markPeacefulInteraction(targetNm) {
+  lastPeacefulInteractTs = Date.now();
+  lastPeacefulTarget = targetNm || null;
+}
+
+// 비전투 상호작용 함수 래핑 (교류 / 동맹 제안 / 치료)
+['interactWithTarget', 'talkToTarget', 'proposeAlly', 'healTarget', 'giftItemToTarget'].forEach(fnName => {
+  if (typeof window[fnName] === 'function') {
+    const _origPeaceFn = window[fnName];
+    window[fnName] = async function(targetNm, ...rest) {
+      markPeacefulInteraction(targetNm);
+      return await _origPeaceFn.call(this, targetNm, ...rest);
+    };
+  }
+});
+
+// 주변 인물 영역에서 '교류/동맹/치료' 버튼 클릭 감지 시 즉시 평화 상호작용 잠금 활성화
+document.addEventListener('click', (ev) => {
+  const btn = ev.target && ev.target.closest ? ev.target.closest('#refNearList button') : null;
+  if (!btn) return;
+  const label = (btn.textContent || '').trim();
+  if (label.includes('교류') || label.includes('동맹') || label.includes('치료') || label.includes('선물')) {
+    const onclickAttr = btn.getAttribute('onclick') || '';
+    const m = onclickAttr.match(/\(['"]([^'"]+)['"]\)/);
+    markPeacefulInteraction(m ? m[1] : null);
+  }
+}, true);
+
+// 평화 상호작용 직후 1.2초 이내에 같은 대상(또는 리스트 밀림)으로 들어오는 잘못된 공격 호출 차단
+const _baseStartBattleGuardPeace = startBattleWithTarget;
+startBattleWithTarget = async function(targetName) {
+  const elapsed = Date.now() - lastPeacefulInteractTs;
+  if (elapsed < 1200 && (!lastPeacefulTarget || lastPeacefulTarget === targetName)) {
+    return;
+  }
+  await _baseStartBattleGuardPeace(targetName);
+};
