@@ -565,7 +565,7 @@ function calcMoveSeconds(fromId, toId) {
   const c = getPickedChar();
   const agiBonus = Math.min(2, Math.floor(((c?.agi || 1) - 1) / 3));
   const clubBonus = c?.club === '육상부' ? 1 : 0;
-  const condPen = (play.me.condition === '부상' || play.me.condition === '굶주림' || play.me.condition === '피로') ? 2 : 0;
+  const condPen = hasAnyCondition(['부상', '굶주림', '피로']) ? 2 : 0;
   const baseByHops = hops <= 1 ? 3 : (hops === 2 ? 7 : (hops === 3 ? 11 : 14));
   return Math.max(3, Math.min(16, baseByHops - agiBonus - clubBonus + condPen));
 }
@@ -590,6 +590,58 @@ let npcAlliances = [];
 let plantedMines = [];
 let zoneDroppedItems = {};
 
+/* NPC 동맹 짝꿍 조회 helper (누락되어 전투/이동 크래시를 유발하던 함수 복구) */
+function getNpcAllyPairName(npcName) {
+  const pair = (npcAlliances || []).find(([a, b]) => a === npcName || b === npcName);
+  if (!pair) return null;
+  return pair[0] === npcName ? pair[1] : pair[0];
+}
+
+/* 복수 상태이상(출혈, 중독, 부상, 피로, 굶주림) 통합 관리 helper */
+function getActiveConditions(condList) {
+  if (Array.isArray(condList)) return condList.filter(x => x && x !== '양호');
+  if (typeof condList === 'string' && condList && condList !== '양호') {
+    return condList.split('·').map(s => s.trim()).filter(x => x && x !== '양호');
+  }
+  return [];
+}
+
+function formatConditionsText(condList) {
+  const arr = getActiveConditions(condList);
+  return arr.length ? arr.join(' · ') : '양호';
+}
+
+function hasCondition(cond) {
+  return getActiveConditions(play.me.conditions).includes(cond);
+}
+
+function hasAnyCondition(list) {
+  const cur = getActiveConditions(play.me.conditions);
+  return list.some(c => cur.includes(c));
+}
+
+function addMyCondition(cond) {
+  if (!cond || cond === '양호') return false;
+  if (!Array.isArray(play.me.conditions)) play.me.conditions = getActiveConditions(play.me.conditions);
+  if (!play.me.conditions.includes(cond)) {
+    play.me.conditions.push(cond);
+    play.me.condition = formatConditionsText(play.me.conditions);
+    return true;
+  }
+  return false;
+}
+
+function removeMyCondition(cond) {
+  if (!Array.isArray(play.me.conditions)) play.me.conditions = getActiveConditions(play.me.conditions);
+  const idx = play.me.conditions.indexOf(cond);
+  if (idx >= 0) {
+    play.me.conditions.splice(idx, 1);
+    play.me.condition = formatConditionsText(play.me.conditions);
+    return true;
+  }
+  return false;
+}
+
 /* 대기실 & 멀티 동기화 상태 */
 let waitRoom = {
   code: null,
@@ -605,7 +657,7 @@ let waitRoom = {
   members: []
 };
 
-let humanStateMap = {};     // 다른 실제 유저의 HP, 허기, 수면, 컨디션, 소지품 동기화 저장소
+let humanStateMap = {};     // 다른 실제 유저의 HP, 허기, 수면, 컨디션, 소지품, 인장 동기화 저장소
 let pendingGroupMove = null; // 동맹 전원 동행 이동 요청 상태
 
 let modalState = {
@@ -657,6 +709,7 @@ let play = {
   players: [],
   recordedFinish: false,
   nightSleepMinutes: 0,
+  awakeHoursWithoutSleep: 0,
   sessionStartMs: Date.now(),
   combatCount: 0,
   killCount: 0,
@@ -672,6 +725,7 @@ let play = {
     zone: 'old_school',
     alive: true,
     condition: '양호',
+    conditions: [],
     weapon: { name: '맨손', atk: 1, kind: '근접', dura: null, maxDura: null },
     bag: [],
     maxBag: 8,
@@ -861,23 +915,48 @@ function getTraitSituationalLine(npcName, kind) {
 let npcStateMap = {};
 let allyBondEventCooldown = {};
 
+function findHumanPlayerRow(name) {
+  if (!name) return null;
+  const target = String(name).trim();
+  const isHumanFlag = (val) => val === false || val === 'false' || val === 0 || val === '0' || val == null;
+  return play.players.find(p => isHumanFlag(p.is_npc) && String(p.name || '').trim() === target) || null;
+}
+
 function isHumanPlayerName(name) {
-  return play.players.some(p => !p.is_npc && p.name === name);
+  if (!name) return false;
+  if (findHumanPlayerRow(name)) return true;
+  if (humanStateMap[name]) return true;
+  if (!NPC_ROSTER.some(n => n.name === name) && waitRoom.members.some(m => m.name === name)) return true;
+  return false;
+}
+
+function getParticipantAvatar(name) {
+  const myName = getPickedChar()?.name;
+  if (name === myName) return play.me.avatar || null;
+  if (humanStateMap[name]?.avatar) return humanStateMap[name].avatar;
+  const pRow = play.players.find(p => String(p.name || '').trim() === String(name || '').trim());
+  if (pRow?.avatar_data) return pRow.avatar_data;
+  if (pRow?.stats?.avatar) return pRow.stats.avatar;
+  const wMem = waitRoom.members.find(m => m.name === name);
+  if (wMem?.avatar_data) return wMem.avatar_data;
+  if (wMem?.stats?.avatar) return wMem.stats.avatar;
+  return null;
 }
 
 function getParticipantState(name) {
-  const pRow = play.players.find(p => p.name === name);
-  if (pRow && !pRow.is_npc) {
+  const pRow = findHumanPlayerRow(name);
+  if (pRow || isHumanPlayerName(name)) {
     const h = humanStateMap[name] || {};
     return {
       isHuman: true,
-      hp: pRow.hp ?? 15,
+      hp: pRow?.hp ?? h.hp ?? 15,
       maxHp: 15,
       hunger: h.hunger ?? 100,
       sleepMinutes: h.sleepMinutes ?? 0,
-      condition: h.condition || '양호',
+      condition: formatConditionsText(h.conditions || h.condition || '양호'),
       sleeping: Boolean(h.sleeping),
-      bag: Array.isArray(h.bag) ? h.bag : []
+      bag: Array.isArray(h.bag) ? h.bag : [],
+      avatar: getParticipantAvatar(name)
     };
   }
   return getNpcState(name);
@@ -887,6 +966,11 @@ function getNpcState(npcName) {
   if (!npcStateMap[npcName]) {
     const meta = NPC_ROSTER.find(n => n.name === npcName);
     const pRow = play.players.find(p => p.name === npcName);
+    const wepName = meta?.weapon || '단검';
+    const wepBase = LOOT_ITEMS.find(x => x.name === wepName) || STARTER_WEAPONS.find(x => x.name === wepName);
+    const wepAtk = wepBase?.atk || 4;
+    const wepKind = wepBase?.kind || '근접';
+    const wepDura = wepBase?.dura || 6;
     npcStateMap[npcName] = {
       isHuman: false,
       hp: pRow ? (pRow.hp ?? 15) : 15,
@@ -896,9 +980,9 @@ function getNpcState(npcName) {
       condition: '양호',
       sleeping: false,
       bag: [
-        { name: meta?.weapon || '단검', type: 'weapon', atk: 5, kind: '근접', dura: 6, maxDura: 6 },
-        { name: '빵', type: 'food', val: 28 },
-        { name: '붕대', type: 'heal', val: 3 }
+        { name: wepName, type: 'weapon', atk: wepAtk, kind: wepKind, dura: wepDura, maxDura: wepDura, desc: `공격력 ${wepAtk} (${wepKind}) · 내구 ${wepDura}/${wepDura}` },
+        { name: '빵', type: 'food', val: 28, desc: '허기 +28 · 굶주림 완화' },
+        { name: '붕대', type: 'heal', val: 3, cures: ['출혈'], desc: 'HP +3 · 출혈 치료' }
       ]
     };
   }
@@ -909,10 +993,31 @@ function getNpcState(npcName) {
   return npcStateMap[npcName];
 }
 
+function getItemDesc(it) {
+  if (!it) return '';
+  if (it.desc) return it.desc;
+  const ref = LOOT_ITEMS.find(x => x.name === it.name)
+    || STARTER_WEAPONS.find(x => x.name === it.name)
+    || STARTER_FOODS.find(x => x.name === it.name)
+    || STARTER_UTILITIES.find(x => x.name === it.name);
+  if (ref && ref.desc) return ref.desc;
+  if (it.type === 'weapon') {
+    const dStr = it.dura != null ? ` · 내구 ${it.dura}/${it.maxDura || it.dura}` : '';
+    return `공격력 ${it.atk || 3} (${it.kind || '근접'})${dStr}`;
+  }
+  if (it.type === 'food') return `허기 +${it.val || 20}`;
+  if (it.type === 'heal') {
+    const cStr = Array.isArray(it.cures) && it.cures.length ? ` · ${it.cures.join('/')} 치료` : '';
+    return `HP +${it.val || 2}${cStr}`;
+  }
+  return '';
+}
+
 async function broadcastMyStateSync() {
   if (!play.code || !play.pid || play.isSolo) return;
   const c = getPickedChar();
   if (!c) return;
+  play.me.condition = formatConditionsText(play.me.conditions);
   await sb.from('room_messages').insert([{
     room_code: play.code,
     sender: c.name,
@@ -923,8 +1028,10 @@ async function broadcastMyStateSync() {
       hunger: play.me.hunger,
       sleepMinutes: play.nightSleepMinutes || 0,
       condition: play.me.condition,
+      conditions: getActiveConditions(play.me.conditions),
       sleeping: isSleepingNow,
-      bag: play.me.bag
+      bag: play.me.bag,
+      avatar: play.me.avatar || null
     })
   }]);
 }
@@ -957,7 +1064,7 @@ async function triggerAllyAffinityEvent(allyName) {
     await appendGameLog(`[${fmtClock()}] 【동료 이벤트】 호감도가 오른 ${allyName}이(가) '${gift.name}'을(를) 건네주었다!`, true);
   } else {
     play.me.hunger = Math.min(100, play.me.hunger + 10);
-    if (play.me.condition === '피로') play.me.condition = '양호';
+    removeMyCondition('피로');
     pushDialogueToChat(`${allyName} (${renderHearts(hearts)})`, '네가 곁에 있어서 정말 다행이야. 조금만 더 힘내자!', { zone: play.me.zone, broadcast: true });
     await appendGameLog(`[${fmtClock()}] 【동료 이벤트】 ${allyName}의 격려로 기운을 차렸다. (허기 +10 · 컨디션 회복)`, true);
   }
@@ -1021,13 +1128,15 @@ function openAllyInteractionMenu(name) {
   const subInfo = isHuman ? `${pRow?.club || '실험체'} · 유저 동료` : `${npc ? npc.trait : '신중형'} · ${renderHearts(getAffinity(name))}`;
   const st = getParticipantState(name);
   const bagNames = st.bag.length ? st.bag.map(b => b.name).join(', ') : '없음';
-  const sleepTxt = st.sleeping ? '수면 중' : `수면 ${Math.floor((st.sleepMinutes || 0) / 60)}/3h`;
+  const sleepTxt = st.sleeping ? '💤 수면 중' : `수면 ${Math.floor((st.sleepMinutes || 0) / 60)}/3h`;
+  const condTxt = st.sleeping ? `수면 중 · ${st.condition}` : st.condition;
   const menu = document.getElementById('refAllyMenu');
   menu.style.display = 'block';
   menu.innerHTML = `
     <div style="font-size:11px;font-weight:bold;color:#eae2ce;">${esc(name)} (${esc(subInfo)})</div>
     <div style="font-size:10px;color:#c7d6f5;margin:3px 0;line-height:1.4;background:#101729;padding:4px 5px;border:1px solid #465d8a;">
-      <div>HP ${st.hp}/${st.maxHp} · 허기 ${st.hunger}/100 · ${esc(sleepTxt)} (${esc(st.condition)})</div>
+      <div>HP ${st.hp}/${st.maxHp} · 허기 ${st.hunger}/100 · ${esc(sleepTxt)}</div>
+      <div>상태: <strong style="color:${st.sleeping ? '#8eb8ff' : '#eae2ce'};">${esc(condTxt)}</strong></div>
       <div>소지품 (${st.bag.length}개): ${esc(bagNames)}</div>
     </div>
     <div class="ref-ally-grid">
@@ -1036,11 +1145,25 @@ function openAllyInteractionMenu(name) {
       <button type="button" class="ref-ally-act-btn" onclick="doAllyAction('eat')">함께 먹기 (반반)</button>
       <button type="button" class="ref-ally-act-btn" onclick="doAllyAction('watch')">불침번 부탁</button>
       ${!isHuman ? `<button type="button" class="ref-ally-act-btn" onclick="doAllyAction('story')">이야기 듣기</button>` : `<button type="button" class="ref-ally-act-btn" onclick="doAllyAction('guard_for_ally')">불침번 서주기</button>`}
-      ${!isHuman ? `<button type="button" class="ref-ally-act-btn" onclick="doAllyAction('info')">정보 묻기</button>` : `<button type="button" class="ref-ally-act-btn" onclick="broadcastMyStateSync()">상태 새로고침</button>`}
+      ${!isHuman ? `<button type="button" class="ref-ally-act-btn" onclick="doAllyAction('info')">정보 묻기</button>` : `<button type="button" class="ref-ally-act-btn" onclick="requestPartnerStateSync('${esc(name)}')">상태 새로고침</button>`}
       <button type="button" class="ref-ally-act-btn" onclick="openAllyGiveModal('${esc(name)}')">건네주기</button>
       <button type="button" class="ref-ally-act-btn" onclick="doAllyAction('break')">동맹 해제</button>
     </div>`;
   refreshGameUI();
+}
+
+async function requestPartnerStateSync(targetName) {
+  await broadcastMyStateSync();
+  if (!play.code || play.isSolo) return;
+  const c = getPickedChar();
+  await sb.from('room_messages').insert([{
+    room_code: play.code,
+    sender: c?.name || '유저',
+    zone: play.me.zone,
+    msg_type: 'p2p_evt',
+    content: JSON.stringify({ kind: 'req_state', to: targetName })
+  }]);
+  openAllyInteractionMenu(targetName);
 }
 
 function closeAllyMenu() {
@@ -1141,7 +1264,7 @@ async function doAllyAction(kind) {
         const f = play.me.bag.splice(idx, 1)[0];
         const halfVal = Math.max(1, Math.floor((f.val || 25) / 2));
         play.me.hunger = Math.min(100, play.me.hunger + halfVal);
-        if (play.me.hunger >= 30 && play.me.condition === '굶주림') play.me.condition = '양호';
+        if (play.me.hunger >= 30) removeMyCondition('굶주림');
         await sb.from('room_messages').insert([{
           room_code: play.code,
           sender: c?.name || '유저',
@@ -1217,7 +1340,7 @@ async function doAllyAction(kind) {
       const halfVal = Math.max(1, Math.floor((f.val || 25) / 2));
       play.me.hunger = Math.min(100, play.me.hunger + halfVal);
       st.hunger = Math.min(100, st.hunger + halfVal);
-      if (play.me.hunger >= 30 && play.me.condition === '굶주림') play.me.condition = '양호';
+      if (play.me.hunger >= 30) removeMyCondition('굶주림');
       if (st.hunger >= 30 && st.condition === '굶주림') st.condition = '양호';
       gainAffinityPoints(ally, 5);
       play.socialCount = (play.socialCount || 0) + 1;
@@ -1229,7 +1352,7 @@ async function doAllyAction(kind) {
     }
   } else if (kind === 'watch') {
     watchOvernight = true;
-    if (play.me.condition === '피로') play.me.condition = '양호';
+    removeMyCondition('피로');
     gainAffinityPoints(ally, 3);
     play.socialCount = (play.socialCount || 0) + 1;
     await appendGameLog(`[${fmtClock()}] ${ally}에게 불침번을 부탁했다.`, true);
@@ -1293,6 +1416,9 @@ async function giveItemToNearNpc(npcName, bagIdx) {
 
   const c = getPickedChar();
   if (isHumanPlayerName(npcName)) {
+    const h = humanStateMap[npcName] || { bag: [] };
+    h.bag = [...(h.bag || []), { ...it }];
+    humanStateMap[npcName] = h;
     await sb.from('room_messages').insert([{
       room_code: play.code,
       sender: c?.name || '유저',
@@ -1350,12 +1476,27 @@ async function interactNearNpc(npcName, askJoin = false) {
 
   if (isHumanPlayerName(npcName)) {
     const c = getPickedChar();
+    await broadcastMyStateSync();
     await sb.from('room_messages').insert([{
       room_code: play.code,
       sender: c?.name || '유저',
       zone: play.me.zone,
       msg_type: 'p2p_evt',
-      content: JSON.stringify({ kind: 'ally_req', to: npcName, club: c?.club || '실험체' })
+      content: JSON.stringify({
+        kind: 'ally_req',
+        to: npcName,
+        club: c?.club || '실험체',
+        state: {
+          hp: play.me.hp,
+          hunger: play.me.hunger,
+          sleepMinutes: play.nightSleepMinutes || 0,
+          condition: formatConditionsText(play.me.conditions),
+          conditions: getActiveConditions(play.me.conditions),
+          sleeping: isSleepingNow,
+          bag: play.me.bag,
+          avatar: play.me.avatar || null
+        }
+      })
     }]);
     await appendGameLog(`[${fmtClock()}] ${npcName}에게 동맹 제안을 보냈다. 응답을 기다리는 중...`, true);
     return;
@@ -1417,6 +1558,16 @@ async function respondHumanAllyRequest(accept) {
   const fromName = modalState.enemyName;
   closeCenterModal();
   const c = getPickedChar();
+  const myStatePayload = {
+    hp: play.me.hp,
+    hunger: play.me.hunger,
+    sleepMinutes: play.nightSleepMinutes || 0,
+    condition: formatConditionsText(play.me.conditions),
+    conditions: getActiveConditions(play.me.conditions),
+    sleeping: isSleepingNow,
+    bag: play.me.bag,
+    avatar: play.me.avatar || null
+  };
   if (accept && play.me.allies.length < 3 && !play.me.allies.includes(fromName)) {
     play.me.allies.push(fromName);
     play.me.selectedAlly = fromName;
@@ -1426,7 +1577,7 @@ async function respondHumanAllyRequest(accept) {
       sender: c?.name || '유저',
       zone: play.me.zone,
       msg_type: 'p2p_evt',
-      content: JSON.stringify({ kind: 'ally_res', to: fromName, accept: true })
+      content: JSON.stringify({ kind: 'ally_res', to: fromName, accept: true, state: myStatePayload })
     }]);
     await broadcastMyStateSync();
     await appendGameLog(`[${fmtClock()}] ${fromName}님과 동맹을 맺었습니다! (동료 ${play.me.allies.length}/3)`, true);
@@ -1530,7 +1681,7 @@ function calcDayNegotiateProb(c, npc) {
 function calcDayFleeProb(c) {
   const agi = c?.agi || 1;
   const clubBonus = c?.club === '육상부' ? 16 : 0;
-  const tiredPen = play.me.condition === '피로' ? 12 : 0;
+  const tiredPen = hasCondition('피로') ? 12 : 0;
   const dayDecay = Math.max(0, (play.day - 2) * 6);
   const raw = 44 + (agi - 1) * 5 + clubBonus - tiredPen - dayDecay;
   return Math.max(10, Math.min(88, raw));
@@ -1707,7 +1858,7 @@ function getEffectiveWeaponDamage(c) {
 function getBattleFleeProb(c) {
   const agi = c?.agi || 1;
   const clubBonus = c?.club === '육상부' ? 0.16 : 0;
-  const tiredPen = play.me.condition === '피로' ? 0.12 : 0;
+  const tiredPen = hasCondition('피로') ? 0.12 : 0;
   const dayDecay = Math.max(0, (play.day - 2) * 0.06);
   return Math.max(0.10, Math.min(0.85, 0.40 + (agi - 1) * 0.05 + clubBonus - tiredPen - dayDecay));
 }
@@ -1715,7 +1866,7 @@ function getBattleFleeProb(c) {
 function getBattleHitProb(c) {
   const hAtk = Math.floor((play.minutes % 1440) / 60);
   const nightAtk = !(hAtk >= 6 && hAtk < 18);
-  const tiredAtkPen = (play.me.condition === '피로' || (nightAtk && (play.nightSleepMinutes || 0) < 120)) ? 0.14 : 0;
+  const tiredAtkPen = (hasCondition('피로') || (nightAtk && (play.nightSleepMinutes || 0) < 120)) ? 0.14 : 0;
   return Math.max(0.30, Math.min(0.95, 0.78 + ((c?.dex || 1) - 1) * 0.03 - tiredAtkPen));
 }
 
@@ -1778,7 +1929,7 @@ function buildSpeedTurnQueue(c, allyFighters, enemyObj, enemyAllyFighter) {
 /* NPC 및 실제 유저 간 양방향 실시간 전투(PvP) 시작 (아군 최대 4명 다대다 및 전원 민첩 속도 순 턴 지원) */
 async function startBattleModal(targetId, opts = {}) {
   if (!play.me.alive || play.finished) return;
-  const target = play.players.find(p => p.id === targetId && p.alive);
+  const target = play.players.find(p => String(p.id) === String(targetId) && p.alive);
   if (!target) return;
 
   sfx.battleStart();
@@ -1859,21 +2010,25 @@ async function startBattleModal(targetId, opts = {}) {
     ? `장착 무기: ${play.me.weapon.name} (공격 ${play.me.weapon.atk}, ${play.me.weapon.kind})`
     : '장착 무기: 맨손 (약함 · 무기 장착 권장)';
 
+  const myAvHtml = play.me.avatar ? `<img src="${play.me.avatar}" alt="">` : esc((c?.name || '실').slice(0, 1));
+  const enAvUrl = getParticipantAvatar(modalState.enemyName);
+  const enAvHtml = enAvUrl ? `<img src="${enAvUrl}" alt="">` : esc(modalState.enemyName.slice(0, 1));
+
   openCenterModal(`
     <div class="modal-top-bar" id="batDragBar" style="cursor:move;">${isPvp ? `실시간 유저 교전 (${scaleTag})` : `전투 (${scaleTag})`}</div>
     <div class="bat-pop-vs">
       <div class="bat-pop-side">
-        <div class="ref-portrait-sq" style="width:52px;height:52px;font-size:18px;">${esc((c?.name || '실').slice(0, 1))}</div>
+        <div class="ref-portrait-sq" style="width:52px;height:52px;font-size:18px;">${myAvHtml}</div>
         <div>
           <div style="font-size:13px;font-weight:bold;">${esc(c?.name || '실험체')}${esc(allyNamesTitle)}</div>
-          <div style="font-size:10px;color:#3d382d;">${esc(c?.club || '천문부')} · ${esc(play.me.condition)}</div>
+          <div style="font-size:10px;color:#3d382d;">${esc(c?.club || '천문부')} · ${esc(formatConditionsText(play.me.conditions))}</div>
           <div class="bat-pop-segs" id="mSegMy"></div>
           <div style="font-size:10px;margin-top:2px;" id="mHpMy">${play.me.hp}/${play.me.maxHp}${esc(allyHpSummary)}</div>
         </div>
       </div>
       <div style="text-align:center;font-size:16px;font-weight:bold;">${scaleTag}</div>
       <div class="bat-pop-side">
-        <div class="ref-portrait-sq" style="width:52px;height:52px;font-size:18px;">${esc(modalState.enemyName.slice(0, 1))}</div>
+        <div class="ref-portrait-sq" style="width:52px;height:52px;font-size:18px;">${enAvHtml}</div>
         <div>
           <div style="font-size:13px;font-weight:bold;">${esc(modalState.enemyName)}${enemyAllyFighter ? ` + ${esc(enemyAllyFighter.name)}` : ''}</div>
           <div style="font-size:10px;color:#3d382d;">${esc(modalState.enemyClub)} · ${esc(modalState.enemyTrait)}</div>
@@ -2122,7 +2277,7 @@ async function mEnemyTurn(singleStep = true) {
   const c = getPickedChar();
   const hNow = Math.floor((play.minutes % 1440) / 60);
   const isNightNow = !(hNow >= 6 && hNow < 18);
-  const sleepLackPen = (play.me.condition === '피로' || (isNightNow && (play.nightSleepMinutes || 0) < 120)) ? 0.14 : 0;
+  const sleepLackPen = (hasCondition('피로') || (isNightNow && (play.nightSleepMinutes || 0) < 120)) ? 0.14 : 0;
   const watchBonus = (modalState.watchSaved) ? 0.15 : 0;
   const dodgeP = modalState.ambush ? 0 : Math.max(0.03, Math.min(0.55, ((c?.agi || 1) - 1) * 0.06 - sleepLackPen + watchBonus));
   if (Math.random() < dodgeP) {
@@ -2170,9 +2325,12 @@ async function mEnemyTurn(singleStep = true) {
     void mBoxEl.offsetWidth;
     mBoxEl.classList.add('bat-shake');
   }
-  if (Math.random() < 0.14 && play.me.condition === '양호') {
-    play.me.condition = '부상';
-    appendModalBattleLog(`충격으로 '부상' 상태가 되었다.`);
+  const enWepStr = modalState.enemyWeapon || '';
+  const isBladeEnemy = ['낫', '단도', '식칼', '커터칼', '가위', '중식도', '사냥칼', '연출용단검'].some(k => enWepStr.includes(k));
+  if (isBladeEnemy && Math.random() < 0.28) {
+    if (addMyCondition('출혈')) appendModalBattleLog(`날붙이에 깊게 베여 '출혈' 상태가 되었다!`);
+  } else if (Math.random() < 0.22) {
+    if (addMyCondition('부상')) appendModalBattleLog(`강한 충격으로 '부상' 상태가 되었다!`);
   }
   if (play.pid) await sb.from('room_players').update({ hp: play.me.hp, alive: play.me.hp > 0 }).eq('id', play.pid);
   appendModalBattleLog(`${modalState.enemyName}의 공격! HP -${dmg}`);
@@ -2520,7 +2678,7 @@ async function finishLootAndCheckWin(enemyName) {
         sender: 'SYS',
         zone: play.me.zone,
         msg_type: 'drop_sync',
-        content: JSON.stringify({ zone: play.me.zone, items: modalState.lootItems })
+        content: JSON.stringify({ actor: getPickedChar()?.name || '', zone: play.me.zone, items: modalState.lootItems })
       }]);
     }
     modalState.lootItems = [];
@@ -2869,6 +3027,10 @@ async function enterWaitRoom(code, isHost, hostName, title, maxPlayers, isPrivat
   waitRoom.ready = Boolean(isHost);
   waitRoom.members = [];
 
+  if (c.avatar_data) {
+    humanStateMap[c.name] = { ...(humanStateMap[c.name] || {}), avatar: c.avatar_data };
+  }
+
   const { data: ins } = await sb.from('room_players').insert([{
     room_code: code,
     name: c.name,
@@ -2878,7 +3040,8 @@ async function enterWaitRoom(code, isHost, hostName, title, maxPlayers, isPrivat
       str: c.str, agi: c.agi, luk: c.luk, dex: c.dex,
       plays: c.plays || 0, wins: c.wins || 0, best_rank: c.best_rank || null,
       ready: Boolean(isHost),
-      is_host: Boolean(isHost)
+      is_host: Boolean(isHost),
+      avatar: c.avatar_data || null
     },
     is_npc: false,
     zone: 'old_school',
@@ -2892,6 +3055,11 @@ async function enterWaitRoom(code, isHost, hostName, title, maxPlayers, isPrivat
 
   bindWaitRoomRealtime();
   await reloadWaitRoomMembers();
+  if (c.avatar_data) {
+    await sb.from('room_messages').insert([{
+      room_code: code, sender: c.name, zone: 'wait', msg_type: 'wait_avatar', content: c.avatar_data
+    }]);
+  }
   showView('viewWaitRoom');
 }
 
@@ -2959,7 +3127,8 @@ async function toggleWaitReady() {
       str: c.str, agi: c.agi, luk: c.luk, dex: c.dex,
       plays: c.plays || 0, wins: c.wins || 0, best_rank: c.best_rank || null,
       ready: waitRoom.ready,
-      is_host: false
+      is_host: false,
+      avatar: c.avatar_data || null
     }
   }).eq('id', play.pid);
   await reloadWaitRoomMembers();
@@ -2984,6 +3153,12 @@ async function reloadWaitRoomMembers() {
   if (!waitRoom.code) return;
   const { data } = await sb.from('room_players').select('*').eq('room_code', waitRoom.code).eq('is_npc', false).order('id', { ascending: true });
   waitRoom.members = data || [];
+  waitRoom.members.forEach(m => {
+    const av = m.avatar_data || m.stats?.avatar;
+    if (av) {
+      humanStateMap[m.name] = { ...(humanStateMap[m.name] || {}), avatar: av };
+    }
+  });
   renderWaitRoomUI();
 }
 
@@ -3018,6 +3193,8 @@ function renderWaitRoomUI() {
         continue;
       }
       const st = m.stats || {};
+      const avUrl = getParticipantAvatar(m.name);
+      const avHtml = avUrl ? `<img src="${avUrl}" alt="" style="width:100%;height:100%;object-fit:cover;">` : esc(m.name.slice(0, 1));
       // 오직 DB의 rooms.host_name과 일치하고 stats.is_host가 true인 방 만든 사람만 방장으로 표시
       const isHostMember = Boolean(st.is_host) && (m.name === waitRoom.hostName);
       const isReady = isHostMember || Boolean(st.ready);
@@ -3027,7 +3204,7 @@ function renderWaitRoomUI() {
         : (isReady ? `<span class="wait-badge ready">준비완료</span>` : `<span class="wait-badge">대기중</span>`);
       grid.innerHTML += `
         <div class="wait-slot-card">
-          <div class="wait-slot-av">${esc(m.name.slice(0, 1))}</div>
+          <div class="wait-slot-av">${avHtml}</div>
           <div>
             <div style="font-size:12px;font-weight:bold;color:#fff;">${esc(m.name)}</div>
             <div style="font-size:10px;color:#c7d6f5;">실험체-${m.exp_number} · ${esc(m.club)}</div>
@@ -3067,11 +3244,20 @@ function bindWaitRoomRealtime() {
   waitRoom.chan = sb.channel('wait-' + waitRoom.code)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'room_players', filter: `room_code=eq.${waitRoom.code}` }, async () => {
       await reloadWaitRoomMembers();
+      const myAv = getPickedChar()?.avatar_data;
+      if (myAv && waitRoom.code) {
+        await sb.from('room_messages').insert([{
+          room_code: waitRoom.code, sender: getPickedChar().name, zone: 'wait', msg_type: 'wait_avatar', content: myAv
+        }]);
+      }
     })
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'room_messages', filter: `room_code=eq.${waitRoom.code}` }, p => {
       const msg = p.new;
       if (msg.msg_type === 'wait_chat' && msg.sender !== getPickedChar()?.name) {
         appendWaitChat(msg.sender, msg.content);
+      } else if (msg.msg_type === 'wait_avatar' && msg.sender !== getPickedChar()?.name) {
+        humanStateMap[msg.sender] = { ...(humanStateMap[msg.sender] || {}), avatar: msg.content };
+        renderWaitRoomUI();
       } else if (msg.msg_type === 'wait_opt') {
         try {
           const parsed = JSON.parse(msg.content);
@@ -3161,7 +3347,11 @@ function initNpcAlliances(players) {
   plantedMines = [];
   zoneDroppedItems = {};
   npcStateMap = {};
-  humanStateMap = {};
+  const preservedAvatars = {};
+  Object.keys(humanStateMap).forEach(k => {
+    if (humanStateMap[k]?.avatar) preservedAvatars[k] = { avatar: humanStateMap[k].avatar };
+  });
+  humanStateMap = preservedAvatars;
   pendingGroupMove = null;
   for (let i = 0; i + 1 < npcs.length; i += 6) {
     npcAlliances.push([npcs[i], npcs[i + 1]]);
@@ -3218,6 +3408,7 @@ async function launchPlay(code, isHost, c, spawnNpcCount = null, isSolo = false,
   play.actionSec = 0;
   play.recordedFinish = false;
   play.nightSleepMinutes = 0;
+  play.awakeHoursWithoutSleep = 0;
   play.sessionStartMs = Date.now();
   play.combatCount = 0;
   play.killCount = 0;
@@ -3253,6 +3444,7 @@ async function launchPlay(code, isHost, c, spawnNpcCount = null, isSolo = false,
     zone: startZone,
     alive: true,
     condition: '양호',
+    conditions: [],
     weapon: {
       name: starterWep.name,
       atk: starterWep.atk + strBonus,
@@ -3280,12 +3472,12 @@ async function launchPlay(code, isHost, c, spawnNpcCount = null, isSolo = false,
       zone: startZone,
       hp: 15,
       alive: true,
-      stats: { str: c.str, agi: c.agi, luk: c.luk, dex: c.dex }
+      stats: { str: c.str, agi: c.agi, luk: c.luk, dex: c.dex, avatar: c.avatar_data || null }
     }).eq('id', play.pid);
   } else {
     const { data: ins } = await sb.from('room_players').insert([{
       room_code: code, name: c.name, exp_number: c.exp_number, club: c.club,
-      stats: { str: c.str, agi: c.agi, luk: c.luk, dex: c.dex },
+      stats: { str: c.str, agi: c.agi, luk: c.luk, dex: c.dex, avatar: c.avatar_data || null },
       is_npc: false, zone: startZone, hp: 15, alive: true
     }]).select().single();
     play.pid = ins ? ins.id : null;
@@ -3307,8 +3499,9 @@ async function launchPlay(code, isHost, c, spawnNpcCount = null, isSolo = false,
     content: `${c.name} (${c.club}) 시뮬레이션 참가`
   }]);
 
-  await broadcastMyStateSync();
   bindGameRealtime();
+  await broadcastMyStateSync();
+  setTimeout(() => { if (!play.finished) broadcastMyStateSync(); }, 1800);
   startGameLoops();
   refreshGameUI();
   showView('viewGame');
@@ -3432,7 +3625,9 @@ function addChatMessage(sender, text, avatarData, isSys = false, zone = 'zone', 
   row.dataset.npc = isNpcLine ? '1' : '0';
   if (isNpcLine && !play.showNpcChat) row.style.display = 'none';
 
-  const avHtml = avatarData ? `<img src="${avatarData}" alt="">` : esc(sender.slice(0, 1));
+  const cleanName = sender.replace(/^\[사망\]\s*/, '').trim();
+  const resolvedAvatar = avatarData || (!isNpcLine ? getParticipantAvatar(cleanName) : null);
+  const avHtml = resolvedAvatar ? `<img src="${resolvedAvatar}" alt="">` : esc(cleanName.slice(0, 1));
   row.innerHTML = `
     <div class="ref-chat-av">${avHtml}</div>
     <div>
@@ -3464,18 +3659,32 @@ async function applyHourlyConditions() {
   if (!play.me.alive || play.finished) return;
   const m = play.me;
   m.hunger = Math.max(0, Math.round(m.hunger - 1));
-  if (m.hunger < 30 && m.condition === '양호') {
-    m.condition = '굶주림';
-    await appendGameLog(`[${fmtClock()}] 허기가 30 미만으로 떨어져 '굶주림' 상태가 되었다.`, true);
-  } else if (m.hunger >= 30 && m.condition === '굶주림') {
-    m.condition = '양호';
+  if (m.hunger < 30) {
+    if (addMyCondition('굶주림')) {
+      await appendGameLog(`[${fmtClock()}] 허기가 30 미만으로 떨어져 '굶주림' 상태가 되었다.`, true);
+    }
+  } else {
+    removeMyCondition('굶주림');
   }
 
-  if (m.condition === '출혈' || m.condition === '중독') {
+  // 장시간 수면 없이 깨어 있으면 실시간으로 피로 누적
+  if (!isSleepingNow) {
+    play.awakeHoursWithoutSleep = (play.awakeHoursWithoutSleep || 0) + 1;
+    const hCheck = Math.floor((play.minutes % 1440) / 60);
+    const isNightHour = !(hCheck >= 6 && hCheck < 18);
+    if ((play.awakeHoursWithoutSleep >= 14 || (isNightHour && hCheck >= 1 && hCheck < 6 && (play.nightSleepMinutes || 0) < 60)) && !hasCondition('피로')) {
+      if (addMyCondition('피로')) {
+        await appendGameLog(`[${fmtClock()}] 수면 부족으로 몸이 무거워져 '피로' 상태가 되었다!`, true);
+      }
+    }
+  }
+
+  if (hasCondition('출혈') || hasCondition('중독')) {
+    const activeDot = ['출혈', '중독'].filter(x => hasCondition(x)).join('·');
     m.hp = Math.max(0, m.hp - 1);
-    await appendGameLog(`[${fmtClock()}] ${m.condition} 영향으로 HP -1`, true);
+    await appendGameLog(`[${fmtClock()}] ${activeDot} 영향으로 HP -1`, true);
     if (play.pid) await sb.from('room_players').update({ hp: m.hp, alive: m.hp > 0 }).eq('id', play.pid);
-    if (m.hp === 0) await handleMeDead(m.condition);
+    if (m.hp === 0) await handleMeDead(activeDot);
   } else if (m.hunger === 0) {
     m.hp = Math.max(0, m.hp - 2);
     await appendGameLog(`[${fmtClock()}] 극심한 허기로 HP -2`, true);
@@ -3543,12 +3752,13 @@ function startGameLoops() {
       sleepHealCarry += minDelta;
       if (sleepHealCarry >= 60) {
         sleepHealCarry -= 60;
+        play.awakeHoursWithoutSleep = 0;
         if (play.me.hp < play.me.maxHp) {
           play.me.hp = Math.min(play.me.maxHp, play.me.hp + 1);
           if (play.pid) await sb.from('room_players').update({ hp: play.me.hp }).eq('id', play.pid);
         }
-        if (play.nightSleepMinutes >= 180 && play.me.condition === '피로') {
-          play.me.condition = '양호';
+        if (play.nightSleepMinutes >= 180) {
+          removeMyCondition('피로');
         }
         await broadcastMyStateSync();
       }
@@ -3588,13 +3798,14 @@ function startGameLoops() {
             if (watchOvernight && play.me.allies.length > 0) {
               await appendGameLog(`[${fmtClock()}] 밤 수면이 3시간에 못 미쳤지만, 동료 ${play.me.allies[0]}의 불침번 덕분에 피로를 면했다!`, true);
             } else {
-              play.me.condition = '피로';
+              addMyCondition('피로');
               await appendGameLog(`[${fmtClock()}] 밤 수면 3시간을 채우지 못해 '피로' 상태가 되었다!`, true);
             }
-          } else if (play.me.condition === '피로') {
-            play.me.condition = '양호';
+          } else {
+            removeMyCondition('피로');
             await appendGameLog(`[${fmtClock()}] 밤 3시간 수면을 채워 '피로'가 풀렸다.`, true);
           }
+          await broadcastMyStateSync();
         }
         watchOvernight = false;
         isSleepingNow = false;
@@ -3686,11 +3897,17 @@ function startGameLoops() {
       const aliveNpcs = play.players.filter(p => p.is_npc && p.alive);
       const lateGame = safe.length <= 10;
 
-      if (aliveNpcs.length && safe.length > 0 && Math.random() < 0.14) {
+      // 일차가 지날수록 이동·합류 빈도 점진 증가 (1일차는 차분하게)
+      const npcMoveProb = play.day === 1 ? 0.14 : (lateGame ? 0.28 : 0.20);
+      if (aliveNpcs.length && safe.length > 0 && Math.random() < npcMoveProb) {
         const npc = aliveNpcs[Math.floor(Math.random() * aliveNpcs.length)];
-        const dest = lateGame
-          ? safe[Math.min(safe.length - 1, Math.floor(Math.random() * Math.max(1, Math.ceil(safe.length * 0.5))))].id
-          : safe[Math.floor(Math.random() * safe.length)].id;
+        const occupiedSafe = safe.filter(z => aliveNpcs.some(o => o.id !== npc.id && o.zone === z.id));
+        const joinRatio = play.day === 1 ? 0.25 : 0.48;
+        const dest = (occupiedSafe.length > 0 && Math.random() < joinRatio)
+          ? occupiedSafe[Math.floor(Math.random() * occupiedSafe.length)].id
+          : (lateGame
+              ? safe[Math.min(safe.length - 1, Math.floor(Math.random() * Math.max(1, Math.ceil(safe.length * 0.5))))].id
+              : safe[Math.floor(Math.random() * safe.length)].id);
 
         const partnerName = getNpcAllyPairName(npc.name);
         const partner = partnerName ? play.players.find(p => p.name === partnerName && p.alive) : null;
@@ -3717,9 +3934,16 @@ function startGameLoops() {
         }
       }
 
-      const randomClashProb = lateGame ? 0.05 : 0.018;
+      // NPC 간 랜덤 교전: 1일차는 매우 드물게, 일차가 지날수록 빈도 상승
+      const randomClashProb = play.day === 1 ? 0.022 : (lateGame ? 0.14 : Math.min(0.10, 0.04 + (play.day - 2) * 0.02));
       if (aliveNpcs.length >= 2 && Math.random() < randomClashProb) {
-        const attacker = aliveNpcs[Math.floor(Math.random() * aliveNpcs.length)];
+        const clashCandidates = aliveNpcs.filter(atk => {
+          const pName = getNpcAllyPairName(atk.name);
+          return play.players.some(v => v.alive && v.zone === atk.zone && v.id !== atk.id && v.name !== pName);
+        });
+        const attacker = clashCandidates.length > 0
+          ? clashCandidates[Math.floor(Math.random() * clashCandidates.length)]
+          : aliveNpcs[Math.floor(Math.random() * aliveNpcs.length)];
         const partnerName = getNpcAllyPairName(attacker.name);
         const coPresent = play.players.filter(p => p.alive && p.zone === attacker.zone && p.id !== attacker.id && p.name !== partnerName);
 
@@ -3729,8 +3953,9 @@ function startGameLoops() {
           const factionTag = partner ? `[${attacker.name}·${partner.name} 동맹]` : attacker.name;
 
           if (victim.is_npc) {
-            const lethalStrike = Math.random() < (lateGame ? 0.25 : 0.12);
-            const dmg = lethalStrike ? (victim.hp || 15) : (3 + Math.floor(Math.random() * 4));
+            const lethalProb = play.day === 1 ? 0.15 : (lateGame ? 0.42 : 0.26);
+            const lethalStrike = Math.random() < lethalProb;
+            const dmg = lethalStrike ? (victim.hp || 15) : (4 + Math.floor(Math.random() * 5));
             const nextHp = Math.max(0, (victim.hp || 15) - dmg);
             victim.hp = nextHp;
 
@@ -3747,20 +3972,23 @@ function startGameLoops() {
               const news = `[속보] ${victim.name}이(가) ${factionTag}과의 교전 끝에 사망했습니다. (생존 ${remCnt}명)`;
               sfx.deathAlert();
               setMarqueeAlert(`${victim.name} 사망!! (생존 ${remCnt}명)`);
+              await appendGameLog(`[${fmtClock()}] ${news}`, true);
               await sb.from('room_messages').insert([{
                 room_code: play.code, sender: 'SYS', zone: 'all', msg_type: 'sys', content: news
               }]);
             } else {
               await sb.from('room_players').update({ hp: nextHp }).eq('id', victim.id);
               if (play.me.alive && !isSleepingNow && !modalState.mode && victim.zone === play.me.zone) {
-                if (play.me.allies.includes(victim.name) && Math.random() < 0.65) {
+                const assistProb = play.day === 1 ? 0.30 : 0.65;
+                const rescueProb = play.day === 1 ? 0.10 : 0.25;
+                if (play.me.allies.includes(victim.name) && Math.random() < assistProb) {
                   openAllyBattleAssistModal(victim.name, attacker.id, attacker.name);
-                } else if (Math.random() < 0.25) {
+                } else if (Math.random() < rescueProb) {
                   openRescueModal(attacker.id, victim.name);
                 }
               }
             }
-          } else if (victim.id === play.pid && play.me.alive && !isSleepingNow && !modalState.mode && Math.random() < 0.35) {
+          } else if (victim.id === play.pid && play.me.alive && !isSleepingNow && !modalState.mode && Math.random() < (play.day === 1 ? 0.14 : 0.35)) {
             openEncounterModal(attacker.id, partner ? `${attacker.name}·${partner.name} 동맹` : '');
           }
         }
@@ -3826,7 +4054,7 @@ function startGameLoops() {
 
     const aliveNowForProvoke = Math.max(1, play.players.filter(p => p.alive).length + (play.me.alive ? 0 : 1));
     const lateSparseBoost = aliveNowForProvoke <= 14 ? 0.025 : 0;
-    const dayScale = play.day >= 2 ? Math.min(0.07, 0.015 + (play.day - 2) * 0.015 + lateSparseBoost) : 0;
+    const dayScale = play.day >= 2 ? Math.min(0.065, 0.008 + (play.day - 2) * 0.015 + lateSparseBoost) : 0;
     if (play.day >= 2 && play.me.alive && !isSleepingNow && !modalState.mode && Math.random() < dayScale) {
       const bullies = play.players.filter(p => p.is_npc && p.alive && p.zone === play.me.zone && !play.me.allies.includes(p.name));
       if (bullies.length > 0) {
@@ -4105,11 +4333,11 @@ async function startMoveToZone(nearest, skipGroupCheck = false) {
       play.me.zone = destId;
       play.moveCount = (play.moveCount || 0) + 1;
       play.me.hunger = Math.max(0, play.me.hunger - hungerLoss);
-      if (play.me.hunger < 30 && play.me.condition === '양호') play.me.condition = '굶주림';
-      else if (play.me.hunger >= 30 && play.me.condition === '굶주림') play.me.condition = '양호';
+      if (play.me.hunger < 30) addMyCondition('굶주림');
+      else removeMyCondition('굶주림');
 
-      if ((destId === 'marsh' || destId === 'sea_cave') && play.me.condition === '양호' && Math.random() < 0.16) {
-        play.me.condition = '중독';
+      if ((destId === 'marsh' || destId === 'sea_cave') && !hasCondition('중독') && Math.random() < 0.16) {
+        addMyCondition('중독');
         await appendGameLog(`[${fmtClock()}] 습지/동굴 기운에 노출되어 '중독' 상태가 되었다.`, true);
       }
 
@@ -4148,7 +4376,8 @@ async function startMoveToZone(nearest, skipGroupCheck = false) {
       drawIslandMap();
 
       const someoneHere = play.players.find(p => p.alive && p.zone === destId && p.id !== play.pid && !play.me.allies.includes(p.name));
-      if (someoneHere && Math.random() < 0.45) {
+      const moveEncProb = play.day === 1 ? 0.18 : Math.min(0.55, 0.28 + (play.day - 2) * 0.07);
+      if (someoneHere && Math.random() < moveEncProb) {
         const pairName = getNpcAllyPairName(someoneHere.name);
         const pairAlive = pairName ? play.players.find(p => p.name === pairName && p.alive) : null;
         openEncounterModal(someoneHere.id, pairAlive ? `${someoneHere.name}·${pairAlive.name} 동맹` : '');
@@ -4251,7 +4480,7 @@ async function actRefSearch() {
   }
 
   const c = getPickedChar();
-  const baseSec = (play.me.condition === '부상' || play.me.condition === '피로') ? 12 : 10;
+  const baseSec = hasAnyCondition(['부상', '피로']) ? 12 : 10;
   play.actionKind = 'search';
   play.actionSec = Math.max(5, baseSec - Math.floor(((c?.agi || 1) - 1) / 2));
   refreshGameUI();
@@ -4271,13 +4500,14 @@ async function actRefSearch() {
 
       const luk = c ? (c.luk || 1) : 1;
       play.me.hunger = Math.max(0, play.me.hunger - 2);
-      if (play.me.hunger < 30 && play.me.condition === '양호') play.me.condition = '굶주림';
+      if (play.me.hunger < 30) addMyCondition('굶주림');
       const astroBonus = (c && c.club === '천문부') ? 0.12 : 0;
       const successProb = Math.min(0.92, 0.60 + (luk - 1) * 0.05 + astroBonus);
 
       if (Math.random() < successProb) {
         const floorArr = zoneDroppedItems[play.me.zone];
-        const fromFloor = (floorArr && floorArr.length > 0);
+        // 바닥 유실물은 30% 확률로만 발견하고, 나머지는 해당 구역 원래 아이템 풀에서 탐색
+        const fromFloor = Boolean(floorArr && floorArr.length > 0 && Math.random() < 0.30);
         const picked = fromFloor ? floorArr.shift() : pickZoneLootItem(play.me.zone);
         if (play.me.bag.length < play.me.maxBag) {
           play.me.bag.push(picked);
@@ -4288,8 +4518,12 @@ async function actRefSearch() {
           await appendGameLog(`[${fmtClock()}] 탐색 완료: ${srcTag}'${picked.name}'을(를) 획득했다.${astroTag}`);
           await broadcastMyStateSync();
         } else {
-          if (!zoneDroppedItems[play.me.zone]) zoneDroppedItems[play.me.zone] = [];
-          zoneDroppedItems[play.me.zone].push(picked);
+          if (fromFloor) {
+            floorArr.unshift(picked);
+          } else {
+            if (!zoneDroppedItems[play.me.zone]) zoneDroppedItems[play.me.zone] = [];
+            zoneDroppedItems[play.me.zone].push(picked);
+          }
           await appendGameLog(`[${fmtClock()}] 가방이 가득 차 '${picked.name}'을(를) 바닥에 두고 왔다.`, true);
         }
       } else {
@@ -4374,7 +4608,7 @@ async function handleMeDead(reason) {
         sender: 'SYS',
         zone: play.me.zone,
         msg_type: 'drop_sync',
-        content: JSON.stringify({ zone: play.me.zone, items: play.me.bag, corpseOf: getPickedChar()?.name || '참가자' })
+        content: JSON.stringify({ actor: getPickedChar()?.name || '', zone: play.me.zone, items: play.me.bag, corpseOf: getPickedChar()?.name || '참가자' })
       }]);
     }
     play.me.bag = [];
@@ -4663,17 +4897,18 @@ async function useBagItem(idx) {
   if (it.type === 'heal') {
     const mult = (c && c.club === '보건부') ? 2 : 1;
     play.me.hp = Math.min(play.me.maxHp, play.me.hp + it.val * mult);
-    if (Array.isArray(it.cures) && it.cures.includes(play.me.condition)) {
-      play.me.condition = '양호';
+    if (Array.isArray(it.cures)) {
+      it.cures.forEach(cName => removeMyCondition(cName));
     }
     if (play.pid) await sb.from('room_players').update({ hp: play.me.hp }).eq('id', play.pid);
     const healTag = (c && c.club === '보건부') ? ' [보건부 특기 발동: 치료량 2배]' : '';
-    await appendGameLog(`[${fmtClock()}] '${it.name}' 사용 (HP ${play.me.hp}/${play.me.maxHp}, 상태: ${play.me.condition})${healTag}`);
+    await appendGameLog(`[${fmtClock()}] '${it.name}' 사용 (HP ${play.me.hp}/${play.me.maxHp}, 상태: ${formatConditionsText(play.me.conditions)})${healTag}`);
     play.me.bag.splice(idx, 1);
   } else if (it.type === 'food') {
     const bonus = (c && c.club === '요리부') ? 15 : 0;
     play.me.hunger = Math.min(100, play.me.hunger + it.val + bonus);
-    if (play.me.hunger >= 30 && play.me.condition === '굶주림') play.me.condition = '양호';
+    if (play.me.hunger >= 30) removeMyCondition('굶주림');
+    if (it.name && it.name.includes('전투식량')) removeMyCondition('피로');
     const foodTag = (c && c.club === '요리부') ? ' [요리부 특기 발동: 허기 회복 +15]' : '';
     await appendGameLog(`[${fmtClock()}] '${it.name}' 섭취 (허기 ${play.me.hunger}/100)${foodTag}`);
     play.me.bag.splice(idx, 1);
@@ -4776,7 +5011,7 @@ async function dropBagItem(idx) {
       sender: 'SYS',
       zone: play.me.zone,
       msg_type: 'drop_sync',
-      content: JSON.stringify({ zone: play.me.zone, items: [{ ...it }] })
+      content: JSON.stringify({ actor: getPickedChar()?.name || '', zone: play.me.zone, items: [{ ...it }] })
     }]);
   }
   await broadcastMyStateSync();
@@ -4900,6 +5135,11 @@ function bindGameRealtime() {
       const { data } = await sb.from('room_players').select('*').eq('room_code', play.code);
       if (data) {
         play.players = data;
+        play.players.forEach(p => {
+          if (!p.is_npc && p.stats?.avatar) {
+            humanStateMap[p.name] = { ...(humanStateMap[p.name] || {}), avatar: p.stats.avatar };
+          }
+        });
         const meRow = play.players.find(p => p.id === play.pid);
         if (meRow && play.me.alive && !meRow.alive && !play.finished) {
           play.me.hp = 0;
@@ -4962,6 +5202,7 @@ function bindGameRealtime() {
       if (msg.msg_type === 'drop_sync') {
         try {
           const d = JSON.parse(msg.content);
+          if (d.actor && d.actor === myName) return;
           if (d.zone && Array.isArray(d.items)) {
             if (!zoneDroppedItems[d.zone]) zoneDroppedItems[d.zone] = [];
             zoneDroppedItems[d.zone].push(...d.items);
@@ -4972,8 +5213,13 @@ function bindGameRealtime() {
 
       if (msg.msg_type === 'state_sync' && msg.sender !== myName) {
         try {
-          humanStateMap[msg.sender] = JSON.parse(msg.content);
-          refreshGameUI();
+          const parsedSt = JSON.parse(msg.content);
+          humanStateMap[msg.sender] = { ...(humanStateMap[msg.sender] || {}), ...parsedSt };
+          if (play.me.selectedAlly === msg.sender && document.getElementById('refAllyMenu')?.style.display === 'block') {
+            openAllyInteractionMenu(msg.sender);
+          } else {
+            refreshGameUI();
+          }
         } catch (e) {}
         return;
       }
@@ -4997,13 +5243,22 @@ function bindGameRealtime() {
         try {
           const ev = JSON.parse(msg.content);
           if (ev.to !== myName) return;
-          if (ev.kind === 'ally_req') {
+          if (ev.kind === 'req_state') {
+            await broadcastMyStateSync();
+          } else if (ev.kind === 'ally_req') {
+            if (ev.state) {
+              humanStateMap[msg.sender] = { ...(humanStateMap[msg.sender] || {}), ...ev.state };
+            }
             openHumanAllyRequestModal(msg.sender, ev.club || '실험체');
           } else if (ev.kind === 'ally_res') {
+            if (ev.state) {
+              humanStateMap[msg.sender] = { ...(humanStateMap[msg.sender] || {}), ...ev.state };
+            }
             if (ev.accept && play.me.allies.length < 3 && !play.me.allies.includes(msg.sender)) {
               play.me.allies.push(msg.sender);
               play.me.selectedAlly = msg.sender;
               play.allyCount++;
+              await broadcastMyStateSync();
               await appendGameLog(`[${fmtClock()}] ${msg.sender}님이 동맹 제안을 수락했습니다!`, true);
             } else {
               await appendGameLog(`[${fmtClock()}] ${msg.sender}님이 동맹 제안을 거절했습니다.`, true);
@@ -5042,7 +5297,7 @@ function bindGameRealtime() {
             refreshGameUI();
           } else if (ev.kind === 'share_food') {
             play.me.hunger = Math.min(100, play.me.hunger + (ev.val || 15));
-            if (play.me.hunger >= 30 && play.me.condition === '굶주림') play.me.condition = '양호';
+            if (play.me.hunger >= 30) removeMyCondition('굶주림');
             await appendGameLog(`[${fmtClock()}] 동료 ${msg.sender}님이 '${ev.foodName}'을(를) 절반 나누어 주어 허기가 회복되었습니다. (${play.me.hunger}/100)`, true);
             await broadcastMyStateSync();
             refreshGameUI();
@@ -5065,7 +5320,7 @@ function bindGameRealtime() {
             if (modalState.mode === 'battle' && modalState.isPvp && modalState.enemyName === msg.sender) {
               if (ev.action === 'atk') {
                 const c = getPickedChar();
-                const dodgeP = Math.max(0.03, Math.min(0.45, ((c?.agi || 1) - 1) * 0.06 - (play.me.condition === '피로' ? 0.14 : 0)));
+                const dodgeP = Math.max(0.03, Math.min(0.45, ((c?.agi || 1) - 1) * 0.06 - (hasCondition('피로') ? 0.14 : 0)));
                 if (Math.random() < dodgeP) {
                   sfx.flee();
                   appendModalBattleLog(`${msg.sender}의 공격을 재빨리 피했다!`);
@@ -5153,8 +5408,6 @@ function bindGameRealtime() {
                 closeCenterModal();
                 await appendGameLog(`[${fmtClock()}] ${ev.reason}`, true);
                 refreshGameUI();
-              } else if (ev.action === 'bat_chat') {
-                appendModalBattleLog(`[채팅] ${msg.sender}: ${ev.text}`);
               }
             }
           }
@@ -5227,16 +5480,19 @@ function refreshGameUI() {
   document.getElementById('refMyStats').textContent =
     c ? `근력 ${c.str} · 민첩 ${c.agi} · 운 ${c.luk} · 재주 ${c.dex}` : '근력 1 · 민첩 1 · 운 1 · 재주 1';
 
+  m.condition = formatConditionsText(m.conditions);
+  const myCondDisplay = isSleepingNow ? `수면 중 · ${m.condition}` : m.condition;
   const duraTxt = m.weapon.dura != null ? `, 내구 ${m.weapon.dura}/${m.weapon.maxDura}` : '';
   document.getElementById('refMyGearState').innerHTML = `
     <div>무기: ${esc(m.weapon.name)} (공격력 ${m.weapon.atk}, ${esc(m.weapon.kind)}${duraTxt})</div>
-    <div>상태: ${esc(m.condition)}</div>`;
+    <div>상태: ${esc(myCondDisplay)}</div>`;
 
   document.getElementById('refBagTitle').textContent = `가방 (${m.bag.length}/${m.maxBag})`;
   const bagEl = document.getElementById('refBagList');
   bagEl.innerHTML = '';
   m.bag.forEach((it, idx) => {
     const actLabel = it.type === 'food' ? '먹기' : (it.type === 'weapon' ? '장착' : (it.type === 'bag_expand' ? '확장' : (it.type === 'mine' ? '설치' : (it.type === 'gear' ? '휴대중' : '사용'))));
+    const descTxt = getItemDesc(it);
     const row = document.createElement('div');
     row.className = 'ref-bag-item';
     row.innerHTML = `
@@ -5247,7 +5503,7 @@ function refreshGameUI() {
           <button type="button" class="ref-mini-btn" ${!m.alive || play.finished ? 'disabled' : ''} onclick="dropBagItem(${idx})">버림</button>
         </span>
       </div>
-      <div style="color:#4a4335;">${esc(it.desc || '')}</div>`;
+      <div style="color:#4a4335;">${esc(descTxt)}</div>`;
     bagEl.appendChild(row);
   });
 
@@ -5267,14 +5523,20 @@ function refreshGameUI() {
       const npcInfo = NPC_ROSTER.find(n => n.name === aName);
       const st = getParticipantState(aName);
       const selCls = m.selectedAlly === aName ? ' selected' : '';
+      const avUrl = getParticipantAvatar(aName);
+      const avHtml = avUrl ? `<img src="${avUrl}" alt="">` : esc(aName.slice(0, 1));
+      const sleepTagAlly = st.sleeping ? ` <span style="background:#234936;color:#eae2ce;padding:0 3px;font-size:9px;">수면중</span>` : '';
+      const condBadge = st.condition && st.condition !== '양호'
+        ? ` <span style="color:#ffb4a2;font-size:9px;">[${esc(st.condition)}]</span>`
+        : '';
       const subRow = isHuman
-        ? `<div style="color:#8eb8ff;font-size:10px;">[유저 동료] ${esc(pRow?.club || '실험체')}</div>`
-        : `<div style="color:#c7d6f5;font-size:10px;">호감도 ${renderHearts(getAffinity(aName))}</div>`;
+        ? `<div style="color:#8eb8ff;font-size:10px;">[유저 동료] ${esc(pRow?.club || '실험체')} · ${esc(st.sleeping ? '수면중' : st.condition)}</div>`
+        : `<div style="color:#c7d6f5;font-size:10px;">호감도 ${renderHearts(getAffinity(aName))} · ${esc(st.sleeping ? '수면중' : st.condition)}</div>`;
       return `
         <div class="ref-ally-card${selCls}" onclick="openAllyInteractionMenu('${esc(aName)}')">
-          <div class="ref-chat-av" style="width:34px;height:34px;">${esc(aName.slice(0, 1))}</div>
+          <div class="ref-chat-av" style="width:34px;height:34px;">${avHtml}</div>
           <div>
-            <div style="font-weight:bold;color:#fff;">${esc(aName)} <span style="font-size:10px;color:#8eb8ff;">HP ${st.hp}/${st.maxHp}</span></div>
+            <div style="font-weight:bold;color:#fff;">${esc(aName)}${sleepTagAlly}${condBadge} <span style="font-size:10px;color:#8eb8ff;">HP ${st.hp}/${st.maxHp}</span></div>
             <div style="color:#9ab4e6;font-size:10px;">${esc(pRow?.club || npcInfo?.club || '동료')} · 허기 ${st.hunger} · 물품 ${st.bag.length}개</div>
             ${subRow}
           </div>
@@ -5307,10 +5569,12 @@ function refreshGameUI() {
       const traitPart = (!isHuman && isDramaClub && npcMeta?.trait) ? ` · 성격 ${npcMeta.trait}` : '';
       const userTag = isHuman ? ` <span style="color:#f5efe2;background:#293b66;padding:0 3px;font-size:9px;">유저</span>` : '';
       const heartHtml = !isHuman ? `<span class="ref-hearts-dark">${renderHearts(getAffinity(p.name))}</span>` : '';
+      const avUrl = getParticipantAvatar(p.name);
+      const avMini = avUrl ? `<img src="${avUrl}" alt="" style="width:18px;height:18px;object-fit:cover;vertical-align:middle;margin-right:4px;border:1px solid #6f89bd;">` : '';
       const div = document.createElement('div');
       div.className = 'ref-near-entry';
       div.innerHTML = `
-        <div class="ref-near-name">${esc(p.name)}${userTag} <span style="font-size:10px;color:#8eb8ff;">HP ${p.hp}</span></div>
+        <div class="ref-near-name">${avMini}${esc(p.name)}${userTag} <span style="font-size:10px;color:#8eb8ff;">HP ${p.hp}</span></div>
         <div class="ref-near-sub">${esc(p.club || '참가자')}${esc(traitPart)} ${heartHtml}</div>
         <div class="ref-near-btns">
           ${!isHuman ? `<button type="button" class="ref-mini-btn" ${locked ? 'disabled' : ''} onclick="talkNearNpc('${esc(p.name)}')">대화</button>` : ''}
