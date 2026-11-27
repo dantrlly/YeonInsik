@@ -10304,3 +10304,172 @@ bindGameRealtime = function() {
     })
     .subscribe();
 };
+// =========================================================================
+// [교전 중 중복 공격 차단 패치] 이미 싸우는 대상은 '도와주기' 외 공격 불가
+// =========================================================================
+
+const inBattlePlayersSet = new Set();
+
+function markPlayersInBattle(names, isFighting) {
+  (names || []).forEach(nm => {
+    if (!nm) return;
+    if (isFighting) inBattlePlayersSet.add(nm);
+    else inBattlePlayersSet.delete(nm);
+  });
+}
+
+// 1. 전투 시작 시 전투 참여자들을 교전 중 목록에 등록 & 방 전체 브로드캐스트
+const _baseStartBattleForLock = startBattleWithTarget;
+startBattleWithTarget = async function(targetName) {
+  const c = getPickedChar();
+  if (!c || !play.me.alive) return;
+
+  // 상대가 이미 다른 사람과 교전 중이면 공격 원천 차단 (동맹 도와주기는 별도 함수로 진입)
+  const isAlreadyFighting = inBattlePlayersSet.has(targetName) || Boolean(humanStateMap[targetName]?.inBattle);
+  if (isAlreadyFighting && !(activePvpSession && (activePvpSession.attacker === targetName || activePvpSession.defender === targetName))) {
+    alert(`${targetName}은(는) 현재 다른 대상과 교전 중입니다. 동맹이 아니라면 난입할 수 없습니다.`);
+    return;
+  }
+
+  markPlayersInBattle([c.name, targetName], true);
+  if (!play.isSolo && play.code) {
+    await sb.from('room_messages').insert([{
+      room_code: play.code,
+      sender: c.name,
+      zone: play.me.zone,
+      msg_type: 'battle_lock_sync',
+      content: JSON.stringify({ fighters: [c.name, targetName], fighting: true })
+    }]);
+  }
+
+  await _baseStartBattleForLock(targetName);
+};
+
+// 2. 전투 모달 종료 시 교전 중 상태 해제 브로드캐스트
+const _baseCloseModalForLock = closeCenterModal;
+closeCenterModal = function() {
+  const c = getPickedChar();
+  const prevEnemy = modalState.enemyName;
+  const wasBattle = modalState.mode === 'battle';
+
+  if (wasBattle && c) {
+    markPlayersInBattle([c.name, prevEnemy], false);
+    if (!play.isSolo && play.code) {
+      sb.from('room_messages').insert([{
+        room_code: play.code,
+        sender: c.name,
+        zone: play.me.zone,
+        msg_type: 'battle_lock_sync',
+        content: JSON.stringify({ fighters: [c.name, prevEnemy].filter(Boolean), fighting: false })
+      }]);
+    }
+  }
+  _baseCloseModalForLock();
+  refreshGameUI();
+};
+
+// 3. 실시간 수신으로 다른 유저들의 교전 시작/종료 상태 동기화
+const _baseHandleMsgForBattleLock = handleIncomingGameMessage;
+handleIncomingGameMessage = function(msg) {
+  if (!msg || play.finished) return;
+  if (msg.msg_type === 'battle_lock_sync') {
+    try {
+      const data = JSON.parse(msg.content);
+      markPlayersInBattle(data.fighters || [], Boolean(data.fighting));
+      refreshGameUI();
+    } catch (e) {}
+    return;
+  }
+  if (msg.msg_type === 'pvp_engage_v2') {
+    try {
+      const ev = JSON.parse(msg.content);
+      markPlayersInBattle([ev.attacker, ev.defender], true);
+    } catch (e) {}
+  }
+  _baseHandleMsgForBattleLock(msg);
+};
+
+// 4. 주변 인물 목록 렌더링 후, 교전 중인 비동맹 대상의 '공격' 버튼 비활성화
+const _baseRefreshGameUIForBattleLock = refreshGameUI;
+refreshGameUI = function() {
+  _baseRefreshGameUIForBattleLock();
+  const nearBox = document.getElementById('refNearList');
+  if (!nearBox) return;
+
+  nearBox.querySelectorAll('button').forEach(btn => {
+    if (btn.textContent.trim() !== '공격') return;
+    const onclickStr = btn.getAttribute('onclick') || '';
+    const match = onclickStr.match(/startBattleWithTarget\(['"]([^'"]+)['"]\)/);
+    if (!match) return;
+    const targetNm = match[1];
+    const isFighting = inBattlePlayersSet.has(targetNm) || Boolean(humanStateMap[targetNm]?.inBattle);
+    if (isFighting) {
+      btn.disabled = true;
+      btn.textContent = '교전중';
+      btn.title = '현재 다른 인물과 교전 중이어서 공격할 수 없습니다.';
+      btn.style.opacity = '0.45';
+      btn.style.cursor = 'not-allowed';
+    }
+  });
+};
+// =========================================================================
+// [와이파이 지연 대비] 2.5초 주기 DB 강제 동기화 & 유령/전투 상태 자동 복구
+// =========================================================================
+
+let networkSyncWatchdog = null;
+
+const _baseStartGameLoopsForNet = startGameLoops;
+startGameLoops = function() {
+  _baseStartGameLoopsForNet();
+  if (networkSyncWatchdog) clearInterval(networkSyncWatchdog);
+
+  networkSyncWatchdog = setInterval(async () => {
+    if (play.finished || play.isSolo || !play.code) return;
+    if (!document.getElementById('viewGame')?.classList.contains('active')) return;
+
+    try {
+      // 1. DB에서 최신 전원 생존/HP/구역 상태 직접 조회 (패킷 누락 복구)
+      const { data: latestPlayers } = await sb
+        .from('room_players')
+        .select('*')
+        .eq('room_code', play.code);
+
+      if (Array.isArray(latestPlayers) && latestPlayers.length > 0) {
+        play.players = latestPlayers;
+
+        // 내 캐릭터가 DB상 사망(alive=false 또는 hp<=0)인데 화면만 살아있는 유령 상태면 즉시 사망 동기화
+        const myRow = latestPlayers.find(p => p.id === play.pid || p.name === getPickedChar()?.name);
+        if (myRow && play.me.alive && (myRow.alive === false || (typeof myRow.hp === 'number' && myRow.hp <= 0))) {
+          play.me.hp = 0;
+          if (typeof closeCenterModal === 'function') closeCenterModal();
+          await handleMeDead(play.deathReason || '교전 중 치명상');
+          return;
+        }
+
+        // 내 HP가 DB와 다를 경우 최신화 (내가 살아있을 때)
+        if (myRow && play.me.alive && typeof myRow.hp === 'number' && myRow.hp < play.me.hp) {
+          play.me.hp = myRow.hp;
+        }
+
+        // 이미 사망한 플레이어는 교전 중 잠금 목록에서 자동 해제
+        latestPlayers.forEach(p => {
+          if (!p.alive || (typeof p.hp === 'number' && p.hp <= 0)) {
+            inBattlePlayersSet.delete(p.name);
+          }
+        });
+      }
+
+      // 2. 내 동맹 목록 중 이미 사망한 인원이 남아있으면 자동 정리 (최대 2명 유지)
+      if (Array.isArray(play.me.allies) && play.me.allies.length > 0) {
+        const aliveNameSet = new Set(play.players.filter(p => p.alive).map(p => p.name));
+        play.me.allies = [...new Set(play.me.allies)]
+          .filter(nm => aliveNameSet.has(nm))
+          .slice(0, 2);
+      }
+
+      refreshGameUI();
+    } catch (e) {
+      // 일시적 와이파이 끊김 시 다음 주기에 자동 재시도
+    }
+  }, 2500);
+};
