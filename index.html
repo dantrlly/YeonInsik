@@ -152,10 +152,12 @@
         <div class="detail-sub" style="color:#9ab4e6;" id="detailRecordLine">0회 · 1위 0 · 최고 -</div>
       </div>
     </div>
-    <div class="detail-meta-row">
-      <span>칭호: <strong id="detailTitleVal">없음</strong></span>
-      <button class="btn-ivory" style="padding:3px 8px; font-size:12px;" onclick="cycleTitle()">칭호 변경</button>
-      <span style="color:#96add9; margin-left:auto;" id="detailAcctLine">계정</span>
+ <div class="detail-meta-row" style="flex-direction:column; align-items:stretch; gap:6px; background:#101729; border:1px solid #526a9c; padding:8px;">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <span style="color:#8eb8ff; font-size:12px;">순위 기록 (최근 15회)</span>
+        <span style="color:#96add9; font-size:11px;" id="detailAcctLine">계정</span>
+      </div>
+      <div id="detailRankHistoryVal" style="font-size:12px; color:#eae2ce; line-height:1.5; word-break:keep-all;">기록 없음</div>
     </div>
     <div class="detail-3btns">
       <button class="btn-ivory" onclick="editCurrentChar()">캐릭터 수정</button>
@@ -226,7 +228,14 @@
           </div>
         </div>
 
-        <button class="btn-ivory" style="width:100%; margin-top:10px;" onclick="startSoloMatch()">혼자 시작 (32인 즉시 시뮬레이션)</button>
+        <!-- 솔로 모드 선택 + 시작 -->
+        <div style="display:flex; gap:6px; margin-top:10px; align-items:center;">
+          <select id="soloGameModeIn" class="txt-input" style="width:150px; padding:8px; font-size:12px;">
+            <option value="adult">성인식 (최후의 1인)</option>
+            <option value="lover">연인식 (최후의 한 쌍)</option>
+          </select>
+          <button class="btn-ivory" style="flex:1;" onclick="startSoloMatch()">혼자 시작 (32인 즉시 시뮬레이션)</button>
+        </div>
         <div class="blue-msg" id="lobbyMsg"></div>
       </div>
 
@@ -252,7 +261,14 @@
       <button type="button" class="btn-navy" style="padding:3px 8px; font-size:11px;" onclick="copyWaitRoomCode()">코드 복사</button>
     </div>
 
-    <div class="wait-opts-grid" style="grid-template-columns: repeat(2, 1fr);">
+    <div class="wait-opts-grid" style="grid-template-columns: repeat(3, 1fr);">
+      <div class="wait-opt-box">
+        <span class="wait-opt-lbl">게임 모드</span>
+        <div class="wait-opt-btns">
+          <button type="button" class="ref-mini-btn on" id="optModeAdult" onclick="setWaitOption('gameMode', 'adult')">성인식</button>
+          <button type="button" class="ref-mini-btn" id="optModeLover" onclick="setWaitOption('gameMode', 'lover')">연인식</button>
+        </div>
+      </div>
       <div class="wait-opt-box">
         <span class="wait-opt-lbl">시작 장소</span>
         <div class="wait-opt-btns">
@@ -278,8 +294,7 @@
       <input type="text" id="waitChatInput" placeholder="대기실 채팅 입력..." onkeydown="if(event.key==='Enter') postWaitChat()">
       <button type="button" class="btn-ivory" style="padding:5px 12px;" onclick="postWaitChat()">전송</button>
     </div>
-
-    <div class="wait-bot-btns">
+<div class="wait-bot-btns">
       <button type="button" class="btn-navy" onclick="leaveWaitRoom()">나가기</button>
       <button type="button" class="btn-ivory" id="waitMainActionBtn">시작하기</button>
     </div>
@@ -365,7 +380,7 @@
 
         <div class="ref-panel">
           <div class="ref-panel-bar">행동</div>
-          <div class="ref-act-col">
+          <div class="ref-act-col" id="refActionCol">
             <button type="button" class="ref-act-btn" id="refBtnSearch" onclick="actRefSearch()">탐색 (10초)</button>
             <div class="ref-act-half-row">
               <button type="button" class="ref-act-btn" id="refBtnSleep" onclick="actRefSleep()">잠자기</button>
@@ -396,6 +411,21 @@
 <!-- 중앙 모달 (돌발 / 전투 / 전리품) -->
 <div class="center-modal-backdrop" id="centerModal">
   <div class="center-modal-box" id="centerModalBox"></div>
+</div>
+
+<!-- 오프닝 / 엔딩 / 희생 컷신 모달 -->
+<div class="center-modal-backdrop" id="cutsceneModal" style="z-index:9500; background:#182036;">
+  <div class="frame-box" id="cutsceneBox" style="width:560px; max-width:94vw; padding:18px; background:#141c30; border:2px solid #eae2ce; color:#eae2ce;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+      <span id="cutsceneHeaderTag" style="font-size:13px; color:#a9c4f7;">第 57 回</span>
+      <button type="button" class="btn-navy" id="cutsceneSkipBtn" style="padding:3px 10px; font-size:12px;" onclick="skipCutscene()">건너뛰기 ▶▶</button>
+    </div>
+    <div id="cutsceneVisualBox" style="min-height:150px; border:2px solid #eae2ce; background:#182036; padding:16px; display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center; margin-bottom:12px;"></div>
+    <div id="cutsceneTextBox" onclick="advanceCutscene()" style="min-height:84px; border:2px solid #eae2ce; background:#eae2ce; color:#141c30; padding:12px 14px; font-size:14px; line-height:1.6; cursor:pointer; position:relative;">
+      <div id="cutsceneDialogue"></div>
+      <span id="cutsceneCursor" style="position:absolute; right:12px; bottom:8px; font-size:12px;">▼</span>
+    </div>
+  </div>
 </div>
 
 <!-- 실험 결과 보고서 모달 -->

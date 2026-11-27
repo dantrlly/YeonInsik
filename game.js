@@ -7415,3 +7415,1310 @@ function refreshGameUI() {
 
 drawCreatorClubs();
 renderCreator();
+// =========================================================================
+// [1단계 패치] 방 삭제 + 대기방 중복 방지 + 호스트 승계 + 불침번 역할 분리
+// =========================================================================
+
+// 1. 로비 방 목록 (입장 옆 [삭제] 버튼 포함)
+refreshRooms = async function() {
+  const box = document.getElementById('lobbyRoomList');
+  const { data } = await sb.from('rooms')
+    .select('*').eq('is_private', false).eq('status', 'waiting')
+    .order('created_at', { ascending: false }).limit(20);
+  if (!data || !data.length) {
+    box.innerHTML = '<div style="text-align:center; color:#8eb8ff; padding-top:46px;">열린 방이 없습니다. 방을 만들어 보세요.</div>';
+    return;
+  }
+  box.innerHTML = '';
+  data.forEach(r => {
+    const el = document.createElement('div');
+    el.className = 'room-item';
+    el.innerHTML = `<span><strong>${esc(r.title)}</strong> <span style="color:#8eb8ff;">${esc(r.code)}</span> · ${esc(r.host_name)} (최대 ${r.max_players || 4}인)</span><span style="display:flex;gap:4px;"><button class="btn-ivory" style="padding:4px 9px; font-size:12px;" onclick="enterCode('${esc(r.code)}')">입장</button><button class="btn-navy" style="padding:4px 8px; font-size:12px; border-color:#ff7b7b; color:#ffb3b3;" onclick="deleteLobbyRoom('${esc(r.code)}')">삭제</button></span>`;
+    box.appendChild(el);
+  });
+};
+
+// 2. 로비 & 대기실 방 삭제 함수
+async function deleteLobbyRoom(code) {
+  if (!code) return;
+  if (!confirm(`방(${code})을 삭제하시겠습니까?`)) return;
+  await sb.from('room_messages').insert([{
+    room_code: code, sender: 'SYS', zone: 'wait', msg_type: 'room_deleted', content: 'deleted'
+  }]);
+  await sb.from('room_messages').delete().eq('room_code', code);
+  await sb.from('room_players').delete().eq('room_code', code);
+  await sb.from('rooms').delete().eq('code', code);
+  await refreshRooms();
+}
+
+async function deleteCurrentWaitRoom() {
+  if (!waitRoom.code) return;
+  if (!confirm('현재 대기실을 삭제하고 로비로 돌아가시겠습니까?')) return;
+  const code = waitRoom.code;
+  await sb.from('room_messages').insert([{
+    room_code: code, sender: 'SYS', zone: 'wait', msg_type: 'room_deleted', content: 'deleted'
+  }]);
+  await sb.from('room_messages').delete().eq('room_code', code);
+  await sb.from('room_players').delete().eq('room_code', code);
+  await sb.from('rooms').delete().eq('code', code);
+  if (waitRoom.chan) { sb.removeChannel(waitRoom.chan); waitRoom.chan = null; }
+  waitRoom.code = null;
+  play.pid = null;
+  await startWithCurrentChar();
+}
+
+// 3. 대기방 입장 중복 방지 + 동일 이름 사전 삭제 + 중복 슬롯 제거
+let _enteringWaitRoom = false;
+const _baseEnterWaitRoom = enterWaitRoom;
+enterWaitRoom = async function(code, isHost, hostName, title, maxPlayers, isPrivate) {
+  if (_enteringWaitRoom) return;
+  const c = getPickedChar();
+  if (!c) return;
+  _enteringWaitRoom = true;
+  try {
+    await sb.from('room_players').delete().eq('room_code', code).eq('name', c.name);
+    await _baseEnterWaitRoom(code, isHost, hostName, title, maxPlayers, isPrivate);
+  } finally {
+    _enteringWaitRoom = false;
+  }
+};
+
+reloadWaitRoomMembers = async function() {
+  if (!waitRoom.code) return;
+  const { data } = await sb.from('room_players').select('*').eq('room_code', waitRoom.code).eq('is_npc', false).order('id', { ascending: true });
+  const seen = new Set();
+  waitRoom.members = (data || []).filter(m => {
+    if (seen.has(m.name)) return false;
+    seen.add(m.name);
+    return true;
+  });
+  const hostEntry = waitRoom.members.find(m => Boolean(m.stats?.is_host));
+  if (hostEntry && !waitRoom.hostName) waitRoom.hostName = hostEntry.name;
+  waitRoom.members.forEach(m => {
+    const av = m.avatar_data || m.stats?.avatar;
+    if (av) humanStateMap[m.name] = { ...(humanStateMap[m.name] || {}), avatar: av };
+  });
+  renderWaitRoomUI();
+};
+
+// 4. 대기실 실시간 채널 (방 삭제 수신 + 호스트 판정 보정)
+bindWaitRoomRealtime = function() {
+  if (waitRoom.chan) sb.removeChannel(waitRoom.chan);
+  waitRoom.chan = sb.channel('wait-' + waitRoom.code)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'room_players', filter: `room_code=eq.${waitRoom.code}` }, async () => {
+      await reloadWaitRoomMembers();
+      const myAv = getPickedChar()?.avatar_data;
+      if (myAv && waitRoom.code) {
+        await sb.from('room_messages').insert([{
+          room_code: waitRoom.code, sender: getPickedChar().name, zone: 'wait', msg_type: 'wait_avatar', content: myAv
+        }]);
+      }
+    })
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'room_messages', filter: `room_code=eq.${waitRoom.code}` }, async p => {
+      const msg = p.new;
+      if (msg.msg_type === 'wait_chat' && msg.sender !== getPickedChar()?.name) {
+        appendWaitChat(msg.sender, msg.content);
+      } else if (msg.msg_type === 'wait_avatar' && msg.sender !== getPickedChar()?.name) {
+        humanStateMap[msg.sender] = { ...(humanStateMap[msg.sender] || {}), avatar: msg.content };
+        renderWaitRoomUI();
+      } else if (msg.msg_type === 'wait_opt') {
+        try {
+          const parsed = JSON.parse(msg.content);
+          waitRoom.gameMode = parsed.gameMode || 'adult';
+          waitRoom.spawnMode = parsed.spawnMode || 'school';
+          waitRoom.ghostChat = parsed.ghostChat || 'ghost_only';
+          renderWaitRoomUI();
+        } catch (e) {}
+      } else if (msg.msg_type === 'room_deleted') {
+        if (waitRoom.chan) { sb.removeChannel(waitRoom.chan); waitRoom.chan = null; }
+        waitRoom.code = null; play.pid = null;
+        alert('방이 삭제되어 로비로 이동합니다.');
+        await startWithCurrentChar();
+      }
+    })
+    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'rooms', filter: `code=eq.${waitRoom.code}` }, async p => {
+      if (p.new.status === 'playing') {
+        const c = getPickedChar();
+        const amIHostNow = waitRoom.host || (p.new.host_name === c?.name);
+        if (waitRoom.chan) { sb.removeChannel(waitRoom.chan); waitRoom.chan = null; }
+        await launchPlay(waitRoom.code, amIHostNow, c, null, false, {
+          existingPid: play.pid,
+          spawnMode: waitRoom.spawnMode,
+          ghostChat: waitRoom.ghostChat,
+          gameMode: waitRoom.gameMode || 'adult'
+        });
+      }
+    })
+    .subscribe();
+};
+
+// 5. 불침번 역할 분리 (myGuard / guardingFor) & 멀티 호스트 자동 유지
+let guardState = { myGuard: null, guardingFor: null };
+setInterval(() => {
+  if (play.finished || !play.code) return;
+  // 불침번 동기화 보정
+  if (guardState.myGuard) watchOvernight = true;
+  // 멀티플레이 호스트 유실 방지 (생존 유저 중 첫 번째 유저 자동 마스터 승계)
+  if (!play.isSolo && play.me.alive) {
+    const myName = getPickedChar()?.name;
+    const aliveHumans = play.players.filter(p => !p.is_npc && p.alive);
+    if (myName && aliveHumans.length > 0 && aliveHumans[0].name === myName && !play.host) {
+      play.host = true;
+    }
+  }
+}, 1500);
+// =========================================================================
+// [2단계 패치] 전투 종료 패킷 차단 + 15초 턴 타이머 + 전투 채팅 동기화
+// =========================================================================
+
+const closedBattleIds = new Set();
+let battleTurnRemainSec = 15;
+let battleTurnTimer = null;
+
+function stopBattleTurnTimer() {
+  if (battleTurnTimer) {
+    clearInterval(battleTurnTimer);
+    battleTurnTimer = null;
+  }
+  battleTurnRemainSec = 15;
+}
+
+function startBattleTurnTimer() {
+  stopBattleTurnTimer();
+  battleTurnRemainSec = 15;
+  battleTurnTimer = setInterval(async () => {
+    if (modalState.mode !== 'battle' || play.finished || play.paused) {
+      stopBattleTurnTimer();
+      return;
+    }
+    battleTurnRemainSec--;
+    const turnEl = document.getElementById('mTurnTxt');
+    if (turnEl) {
+      const baseTxt = modalState.busy ? '상대 행동 대기 중' : '당신의 턴!';
+      turnEl.textContent = `${baseTxt} (${Math.max(0, battleTurnRemainSec)}초)`;
+    }
+
+    if (battleTurnRemainSec <= 0) {
+      battleTurnRemainSec = 15;
+      if (!modalState.busy) {
+        appendModalBattleLog('⏱ 15초 시간 초과! 자동으로 [방어] 자세를 취하고 턴을 넘깁니다.');
+        await mBattleCmd('def');
+      } else if (modalState.isMultiBattle) {
+        appendModalBattleLog('⏱ 상대 응답 시간 초과! 전투 진행 권한을 승계하여 다음 턴으로 진행합니다.');
+        await forceAdvanceStalledMultiTurn();
+      } else if (modalState.isPvp) {
+        appendModalBattleLog('⏱ 상대 응답 시간 초과! 턴을 강제 회수합니다.');
+        modalState.busy = false;
+        renderModalBattleHp();
+      }
+    }
+  }, 1000);
+}
+
+// 모달 닫힐 때 전투 ID를 closedBattleIds에 기록해 지연 패킷 차단 & 타이머 정리
+const _baseCloseCenterModal = closeCenterModal;
+closeCenterModal = function() {
+  if (modalState.battleId) {
+    closedBattleIds.add(modalState.battleId);
+  }
+  stopBattleTurnTimer();
+  _baseCloseCenterModal();
+};
+
+// 전투 시작 시 타이머 자동 작동
+const _baseStartBattleModal = startBattleModal;
+startBattleModal = async function(targetId, opts = {}) {
+  await _baseStartBattleModal(targetId, opts);
+  if (modalState.mode === 'battle') startBattleTurnTimer();
+};
+
+const _baseOpenLiveMultiBattleModal = openLiveMultiBattleModal;
+openLiveMultiBattleModal = async function(clash, mySide, opts = {}) {
+  if (clash && closedBattleIds.has(clash.battleId)) return;
+  await _baseOpenLiveMultiBattleModal(clash, mySide, opts);
+  if (modalState.mode === 'battle') startBattleTurnTimer();
+};
+
+// 내 행동 입력 시 15초 타이머 초기화
+const _baseMBattleCmd = mBattleCmd;
+mBattleCmd = async function(cmd) {
+  battleTurnRemainSec = 15;
+  await _baseMBattleCmd(cmd);
+};
+
+// 전투창 실시간 채팅 (다인 전투 & 1:1 PvP 모두 지원)
+sendBattleChat = async function() {
+  const inp = document.getElementById('mBatChatIn');
+  const c = getPickedChar();
+  if (!inp || !c) return;
+  const txt = inp.value.trim();
+  if (!txt) return;
+  inp.value = '';
+
+  appendModalBattleLog(`[채팅] ${c.name}: ${txt}`);
+  const z = play.me.zone || 'all';
+  addChatMessage(c.name, txt, play.me.avatar, false, z);
+
+  if (play.code) {
+    await sb.from('room_messages').insert([{
+      room_code: play.code, sender: c.name, zone: z, msg_type: 'normal', content: txt
+    }]);
+    if (modalState.isMultiBattle && modalState.battleId) {
+      await sb.from('room_messages').insert([{
+        room_code: play.code,
+        sender: c.name,
+        zone: z,
+        msg_type: 'p2p_evt',
+        content: JSON.stringify({
+          kind: 'bat_chat',
+          battleId: modalState.battleId,
+          text: txt
+        })
+      }]);
+    } else if (modalState.isPvp && modalState.enemyName) {
+      await sendPvpTurnAction({ action: 'bat_chat', text: txt });
+    }
+  }
+};
+// =========================================================================
+// [3단계 패치] 동아리 9종 특기 평준화 + 보건부 타인 치료(+2) + 회복템 + 대화 쿨타임
+// =========================================================================
+
+// 1. 동아리 9종 설명 문구 갱신
+const UPDATED_CLUB_PERKS = {
+  '검도부': '동아리 특기: 근접 피격 시 25% 확률 즉시 반격 (피해 1 + 근력보정) · 같은 동아리 초기 호감도 ♥1',
+  '육상부': '동아리 특기: 도주 성공률 +16%, 이동 시간 단축, 이동 시 허기 소모 -1 경감 · 같은 동아리 초기 호감도 ♥1',
+  '보건부': '동아리 특기: 자신 및 타인(동료·주변 인물) 치료 아이템 회복량 +2 추가 · 같은 동아리 초기 호감도 ♥1',
+  '연극부': '동아리 특기: 대화·협상 성공률 +15%, 주변 NPC 성격(trait) 간파 · 같은 동아리 초기 호감도 ♥1',
+  '천문부': '동아리 특기: 탐색 성공률 +10%, 타 동아리 초기 호감도 소폭 보너스 · 같은 동아리 초기 호감도 ♥1',
+  '만화부': '동아리 특기: 무기 장착 시 22% 확률로 [급소 포착] 발동 (+1 추가 피해) · 같은 동아리 초기 호감도 ♥1',
+  '음악부': '동아리 특기: 연속 공격 명중 시 리듬 콤보(+1 추가 피해, 25% 확률) · 같은 동아리 초기 호감도 ♥1',
+  '궁도부': '동아리 특기: 시작 시 원거리 무기 우선 지급 · 원거리 무기 공격력 +1 · 같은 동아리 초기 호감도 ♥1',
+  '요리부': '동아리 특기: 음식 섭취 시 허기 회복량 +12 추가 보너스 · 같은 동아리 초기 호감도 ♥1'
+};
+CLUB_DATA.forEach(cl => {
+  if (UPDATED_CLUB_PERKS[cl.name]) cl.perk = UPDATED_CLUB_PERKS[cl.name];
+});
+
+// 2. 기존 회복 아이템 상향 & 신규 대용량 회복 아이템 3종 추가
+const HEAL_UPGRADES = {
+  '반창고': { val: 3, desc: 'HP +3 · 가벼운 상처 회복' },
+  '소독약': { val: 4, desc: 'HP +4 · 출혈 치료' },
+  '해독제': { val: 4, desc: 'HP +4 · 중독 치료' },
+  '붕대': { val: 5, desc: 'HP +5 · 출혈 치료' },
+  '진통제': { val: 5, desc: 'HP +5 · 부상 치료' },
+  '허브 연고': { val: 5, desc: 'HP +5 · 출혈 및 가벼운 중독 완화' },
+  '지혈 거즈': { val: 6, desc: 'HP +6 · 출혈 즉시 지혈' },
+  '부목': { val: 6, desc: 'HP +6 · 골절/부상 고정 치료' },
+  '복합 해독 캡슐': { val: 6, desc: 'HP +6 · 중독 및 피로 해독' },
+  '★ 구급 상자': { val: 9, desc: '★ 희귀 · HP +9 · 출혈/중독/부상 치료' },
+  '★ 응급 수혈팩': { val: 11, desc: '★ 희귀 · HP +11 · 심각한 출혈 및 피로 회복' },
+  '★ 만능 구급 키트': { val: 15, desc: '★ 희귀 · HP +15 (전량 회복) · 모든 상태이상 완벽 치료' }
+};
+LOOT_ITEMS.forEach(it => {
+  if (HEAL_UPGRADES[it.name]) Object.assign(it, HEAL_UPGRADES[it.name]);
+});
+STARTER_UTILITIES.forEach(it => {
+  if (HEAL_UPGRADES[it.name]) Object.assign(it, HEAL_UPGRADES[it.name]);
+});
+
+const NEW_HEAL_ITEMS = [
+  { name: '고농축 영양 링거', type: 'heal', val: 8, cures: ['피로', '굶주림'], rare: false, desc: 'HP +8 · 피로 및 굶주림 완화' },
+  { name: '★ 군용 외상 응급팩', type: 'heal', val: 12, cures: ['출혈', '부상'], rare: true, desc: '★ 희귀 · HP +12 · 출혈/부상 전문 치료' },
+  { name: '★ 생체 재생 앰플', type: 'heal', val: 15, cures: ['출혈', '중독', '부상', '피로', '굶주림'], rare: true, desc: '★ 희귀 · HP +15 (전량 회복) · 모든 상태이상 해제' }
+];
+NEW_HEAL_ITEMS.forEach(ni => {
+  if (!LOOT_ITEMS.some(x => x.name === ni.name)) LOOT_ITEMS.push(ni);
+});
+
+const ZONE_EXTRA_HEALS = {
+  clinic: ['고농축 영양 링거', '★ 군용 외상 응급팩', '★ 생체 재생 앰플'],
+  lab: ['고농축 영양 링거', '★ 생체 재생 앰플'],
+  dorm: ['고농축 영양 링거'],
+  warehouse: ['★ 군용 외상 응급팩'],
+  ruins: ['★ 군용 외상 응급팩']
+};
+Object.entries(ZONE_EXTRA_HEALS).forEach(([zid, extras]) => {
+  const z = ISLAND_ZONES.find(x => x.id === zid);
+  if (z && Array.isArray(z.pool)) {
+    extras.forEach(nm => { if (!z.pool.includes(nm)) z.pool.push(nm); });
+  }
+});
+
+// 3. 무기 공격력 동아리 특기 평준화 (궁도부 +1, 만화부 22% +1, 음악부 25% +1)
+getEffectiveWeaponDamage = function(c) {
+  const strVal = c?.str || 1;
+  const w = play.me.weapon;
+  const hasWeapon = w && w.name && w.name !== '맨손';
+  const strBonus = Math.floor((strVal - 1) * 0.5);
+  if (!hasWeapon) {
+    return { baseAtk: 1, strBonus, clubBonus: 0, dmg: Math.max(1, 1 + strBonus), clubAtkMsg: '' };
+  }
+  const baseAtk = w.baseAtk ?? w.atk ?? 4;
+  let clubAtkBonus = 0;
+  let clubAtkMsg = '';
+  if (c?.club === '궁도부' && w.kind === '원거리') {
+    clubAtkBonus += 1;
+    clubAtkMsg = ' [궁도부 특기 발동: 정밀 사격 +1]';
+  } else if (c?.club === '만화부' && Math.random() < 0.22) {
+    clubAtkBonus += 1;
+    clubAtkMsg = ' [만화부 특기 발동: 급소 포착 +1]';
+  } else if (c?.club === '음악부' && Math.random() < 0.25) {
+    clubAtkBonus += 1;
+    clubAtkMsg = ' [음악부 특기 발동: 리듬 콤보 +1]';
+  }
+  return {
+    baseAtk,
+    strBonus,
+    clubBonus: clubAtkBonus,
+    dmg: Math.max(2, baseAtk + strBonus + clubAtkBonus + Math.floor(Math.random() * 2)),
+    clubAtkMsg
+  };
+};
+
+// 4. 아이템 사용 시 보건부 회복량 +2 / 요리부 허기 +12 반영
+const _baseUseBagItem = useBagItem;
+useBagItem = async function(idx) {
+  if (!play.me.alive || play.finished) return;
+  const it = play.me.bag[idx];
+  if (!it) return;
+  const c = getPickedChar();
+  if (it.type === 'heal') {
+    play.itemUseCount = (play.itemUseCount || 0) + 1;
+    const bonus = (c && c.club === '보건부') ? 2 : 0;
+    play.me.hp = Math.min(play.me.maxHp, play.me.hp + (it.val || 3) + bonus);
+    if (Array.isArray(it.cures)) it.cures.forEach(cName => removeMyCondition(cName));
+    if (play.pid) await sb.from('room_players').update({ hp: play.me.hp }).eq('id', play.pid);
+    const healTag = bonus > 0 ? ' [보건부 특기 발동: 회복량 +2]' : '';
+    await appendGameLog(`[${fmtClock()}] '${it.name}' 사용 (HP ${play.me.hp}/${play.me.maxHp}, 상태: ${formatConditionsText(play.me.conditions)})${healTag}`);
+    play.me.bag.splice(idx, 1);
+    await broadcastMyStateSync();
+    refreshGameUI();
+    return;
+  }
+  if (it.type === 'food') {
+    play.itemUseCount = (play.itemUseCount || 0) + 1;
+    const bonus = (c && c.club === '요리부') ? 12 : 0;
+    play.me.hunger = Math.min(100, play.me.hunger + (it.val || 20) + bonus);
+    if (play.me.hunger >= 30) removeMyCondition('굶주림');
+    if (it.name && it.name.includes('전투식량')) removeMyCondition('피로');
+    const foodTag = bonus > 0 ? ' [요리부 특기 발동: 허기 회복 +12]' : '';
+    await appendGameLog(`[${fmtClock()}] '${it.name}' 섭취 (허기 ${play.me.hunger}/100)${foodTag}`);
+    play.me.bag.splice(idx, 1);
+    await broadcastMyStateSync();
+    refreshGameUI();
+    return;
+  }
+  await _baseUseBagItem(idx);
+};
+
+// 5. 보건부 전용 타인(동료·주변 인물) 치료 기능 (+2 보너스)
+function openMedicHealModal(targetName) {
+  if (!play.me.alive || play.finished || isSleepingNow) return;
+  const c = getPickedChar();
+  if (!c || c.club !== '보건부') return;
+  const st = getParticipantState(targetName);
+  const healItems = play.me.bag
+    .map((it, idx) => ({ it, idx }))
+    .filter(x => x.it.type === 'heal');
+
+  const itemBtns = healItems.length
+    ? healItems.map(({ it, idx }) => `
+        <button type="button" class="modal-act-btn" style="text-align:left;display:flex;justify-content:space-between;" onclick="executeMedicHeal('${esc(targetName)}', ${idx})">
+          <span>${esc(it.name)} (기본 +${it.val || 3} → 보건부 +${(it.val || 3) + 2})</span>
+          <span>치료하기 ▶</span>
+        </button>`).join('')
+    : `<div style="font-size:12px;color:#4a4335;padding:8px 0;">가방에 사용할 치료 아이템이 없다.</div>`;
+
+  openCenterModal(`
+    <div class="modal-top-bar">보건부 응급 치료 (+2 보너스)</div>
+    <div class="enc-card" style="text-align:left;">
+      <div style="font-size:14px;font-weight:bold;margin-bottom:4px;">대상: ${esc(targetName)} (현재 HP ${st.hp}/${st.maxHp} · 상태: ${esc(st.condition || '양호')})</div>
+      <div style="font-size:11px;color:#3d382d;">보건부 특기로 회복량이 +2 증가하며 출혈/중독/부상/피로 상태이상을 치료합니다.</div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:5px;max-height:190px;overflow-y:auto;margin-bottom:8px;">
+      ${itemBtns}
+    </div>
+    <button type="button" class="modal-act-btn" style="width:100%;" onclick="closeCenterModal()">닫기</button>
+  `);
+}
+
+async function executeMedicHeal(targetName, bagIdx) {
+  const it = play.me.bag[bagIdx];
+  if (!it || it.type !== 'heal') return closeCenterModal();
+  play.me.bag.splice(bagIdx, 1);
+  play.itemUseCount = (play.itemUseCount || 0) + 1;
+  closeCenterModal();
+
+  const healAmt = (it.val || 3) + 2;
+  const cures = Array.isArray(it.cures) ? it.cures : [];
+  const c = getPickedChar();
+
+  if (isHumanPlayerName(targetName)) {
+    const h = humanStateMap[targetName] || {};
+    const nextHp = Math.min(15, (h.hp ?? 15) + healAmt);
+    h.hp = nextHp;
+    humanStateMap[targetName] = h;
+    const targetRow = play.players.find(p => p.name === targetName);
+    if (targetRow) targetRow.hp = nextHp;
+    await sb.from('room_messages').insert([{
+      room_code: play.code,
+      sender: c?.name || '보건부',
+      zone: play.me.zone,
+      msg_type: 'p2p_evt',
+      content: JSON.stringify({ kind: 'medic_heal', to: targetName, healAmt, cures, itemName: it.name })
+    }]);
+    await appendGameLog(`[${fmtClock()}] 【보건부 치료】 ${targetName}에게 '${it.name}'을(를) 사용해 치료해주었다! (HP +${healAmt})`, true);
+  } else {
+    const st = getNpcState(targetName);
+    const pRow = play.players.find(p => p.name === targetName);
+    const curHp = pRow ? (pRow.hp ?? st.hp ?? 15) : (st.hp ?? 15);
+    const nextHp = Math.min(15, curHp + healAmt);
+    st.hp = nextHp;
+    if (cures.includes(st.condition)) st.condition = '양호';
+    if (pRow) {
+      pRow.hp = nextHp;
+      await sb.from('room_players').update({ hp: nextHp }).eq('id', pRow.id);
+    }
+    const affGain = 14 + Math.floor(Math.random() * 7);
+    const res = gainAffinityPoints(targetName, affGain);
+    play.socialCount = (play.socialCount || 0) + 1;
+    await appendGameLog(`[${fmtClock()}] 【보건부 치료】 ${targetName}에게 '${it.name}'을(를) 사용해 상처를 치료했다! (HP ${nextHp}/15 · 호감도 대폭 상승 ${renderHearts(res.hearts)})`, true);
+    pushDialogueToChat(`${targetName} (${renderHearts(res.hearts)})`, '고마워… 손길이 정말 능숙하네. 덕분에 살 것 같아!', { zone: play.me.zone, broadcast: true });
+  }
+  await broadcastMyStateSync();
+  refreshGameUI();
+}
+
+// 6. 동료 메뉴 & 주변 인물 목록에 보건부 [치료] 버튼 자동 노출
+const _baseOpenAllyInteractionMenu = openAllyInteractionMenu;
+openAllyInteractionMenu = function(name) {
+  _baseOpenAllyInteractionMenu(name);
+  const c = getPickedChar();
+  const menu = document.getElementById('refAllyMenu');
+  if (c && c.club === '보건부' && menu && menu.style.display === 'block') {
+    const grid = menu.querySelector('.ref-ally-grid');
+    if (grid && !grid.querySelector('.medic-heal-btn')) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'ref-ally-act-btn medic-heal-btn';
+      btn.style.background = '#eae2ce';
+      btn.style.fontWeight = 'bold';
+      btn.textContent = '치료해주기 (+2)';
+      btn.onclick = () => openMedicHealModal(name);
+      grid.prepend(btn);
+    }
+  }
+};
+
+const _baseRefreshGameUIForMedic = refreshGameUI;
+refreshGameUI = function() {
+  _baseRefreshGameUIForMedic();
+  const c = getPickedChar();
+  if (!c || c.club !== '보건부') return;
+  const locked = !play.me.alive || play.finished || isSleepingNow;
+  document.querySelectorAll('#refNearList .ref-near-entry').forEach(entry => {
+    const nameEl = entry.querySelector('.ref-near-name');
+    const btnsEl = entry.querySelector('.ref-near-btns');
+    if (!nameEl || !btnsEl || btnsEl.querySelector('.medic-near-btn')) return;
+    const rawName = nameEl.textContent.replace(/유저.*$/, '').replace(/HP\s*\d+.*$/, '').trim();
+    if (!rawName) return;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'ref-mini-btn medic-near-btn';
+    btn.disabled = locked;
+    btn.textContent = '치료';
+    btn.onclick = () => openMedicHealModal(rawName);
+    btnsEl.appendChild(btn);
+  });
+};
+
+// 7. NPC 대화 연타 방지 4초 쿨타임
+const npcTalkCooldownMap = {};
+const _baseTalkNearNpc = talkNearNpc;
+talkNearNpc = async function(npcName) {
+  if (isSleepingNow || isHumanPlayerName(npcName)) return;
+  const now = Date.now();
+  const until = npcTalkCooldownMap[npcName] || 0;
+  if (now < until) {
+    const leftSec = Math.ceil((until - now) / 1000);
+    await appendGameLog(`[${fmtClock()}] ${npcName}과(와)는 잠시 숨을 고른 뒤 대화할 수 있다. (${leftSec}초 대기)`, true);
+    return;
+  }
+  npcTalkCooldownMap[npcName] = now + 4000;
+  await _baseTalkNearNpc(npcName);
+};
+// =========================================================================
+// [4단계 패치] 성인식/연인식 게임 모드 + 허기/NPC 교전 현실화 + 동반 자결
+// =========================================================================
+
+waitRoom.gameMode = 'adult';
+play.gameMode = 'adult';
+play.hadInitialPartner = false;
+play.brokeInitialPartner = false;
+
+// 1. 대기실 옵션 UI에 게임 모드(성인식/연인식) 버튼 상태 반영
+const _baseRenderWaitRoomUI = renderWaitRoomUI;
+renderWaitRoomUI = function() {
+  _baseRenderWaitRoomUI();
+  const mode = waitRoom.gameMode || 'adult';
+  const btnA = document.getElementById('optModeAdult');
+  const btnL = document.getElementById('optModeLover');
+  if (btnA) {
+    btnA.classList.toggle('on', mode === 'adult');
+    btnA.disabled = !waitRoom.host;
+  }
+  if (btnL) {
+    btnL.classList.toggle('on', mode === 'lover');
+    btnL.disabled = !waitRoom.host;
+  }
+};
+
+// 옵션 변경 브로드캐스트에 gameMode 포함
+setWaitOption = async function(key, val) {
+  if (!waitRoom.host || !waitRoom.code) return;
+  waitRoom[key] = val;
+  renderWaitRoomUI();
+  await sb.from('room_messages').insert([{
+    room_code: waitRoom.code,
+    sender: 'SYS',
+    zone: 'wait',
+    msg_type: 'wait_opt',
+    content: JSON.stringify({
+      gameMode: waitRoom.gameMode || 'adult',
+      spawnMode: waitRoom.spawnMode,
+      ghostChat: waitRoom.ghostChat
+    })
+  }]);
+};
+
+// 방장 멀티 시작 시 gameMode 전달
+hostStartWaitRoomMatch = async function() {
+  if (!waitRoom.host || !waitRoom.code) return;
+  const mainBtn = document.getElementById('waitMainActionBtn');
+  if (mainBtn) {
+    mainBtn.disabled = true;
+    mainBtn.textContent = '시뮬레이션 시작 중...';
+  }
+  try {
+    const c = getPickedChar();
+    const humanCnt = Math.max(1, waitRoom.members.length);
+    const npcCnt = await insertMatchedNpcs(waitRoom.code, humanCnt);
+    await sb.from('rooms').update({ status: 'playing' }).eq('code', waitRoom.code);
+    if (waitRoom.chan) { sb.removeChannel(waitRoom.chan); waitRoom.chan = null; }
+    await launchPlay(waitRoom.code, true, c, npcCnt, false, {
+      existingPid: play.pid,
+      spawnMode: waitRoom.spawnMode,
+      ghostChat: waitRoom.ghostChat,
+      gameMode: waitRoom.gameMode || 'adult'
+    });
+  } catch (err) {
+    appendWaitChat('SYS', `시작 중 오류가 발생했습니다: ${err?.message || err}`);
+    renderWaitRoomUI();
+  }
+};
+
+// 솔로 시작 시 드롭다운 모드 반영
+startSoloMatch = async function() {
+  const c = getPickedChar();
+  if (!c) return;
+  const selMode = document.getElementById('soloGameModeIn')?.value || 'adult';
+  const code = genCode();
+  await sb.from('rooms').insert([{
+    code, host_name: c.name, title: `${c.name} 솔로`, is_private: true, max_players: 1, status: 'playing', banned_zones: []
+  }]);
+  const npcCnt = await insertMatchedNpcs(code, 1);
+  await launchPlay(code, true, c, npcCnt, true, { gameMode: selMode });
+};
+
+// 2. 게임 시작 시 모드 세팅 & 연인식 초기 짝 자동 배정
+const _baseLaunchPlayForMode = launchPlay;
+launchPlay = async function(code, isHost, c, spawnNpcCount = null, isSolo = false, opts = {}) {
+  const chosenMode = opts.gameMode || waitRoom.gameMode || 'adult';
+  await _baseLaunchPlayForMode(code, isHost, c, spawnNpcCount, isSolo, opts);
+  play.gameMode = chosenMode;
+  play.hadInitialPartner = false;
+  play.brokeInitialPartner = false;
+  play.initialPartnerName = null;
+
+  const modeLabel = chosenMode === 'lover' ? '戀人式 (연인식 · 최후의 한 쌍)' : '成人式 (성인식 · 최후의 1인)';
+  await appendGameLog(`[${fmtClock()}] 【규칙 안내】 이번 회차는 「${modeLabel}」 규칙으로 진행됩니다.`, true);
+
+  if (chosenMode === 'lover') {
+    const candidates = play.players.filter(p => p.alive && p.id !== play.pid);
+    if (candidates.length > 0) {
+      const partner = candidates[Math.floor(Math.random() * candidates.length)];
+      play.me.allies = [partner.name];
+      play.me.selectedAlly = partner.name;
+      play.hadInitialPartner = true;
+      play.initialPartnerName = partner.name;
+      play.allyCount = 1;
+      if (partner.is_npc) {
+        affinityPointsMap[partner.name] = Math.max(getAffinityPoints(partner.name), 45);
+        getAffinity(partner.name);
+        partner.zone = play.me.zone;
+        await sb.from('room_players').update({ zone: play.me.zone }).eq('id', partner.id);
+      }
+      await broadcastMyStateSync();
+      await appendGameLog(`[${fmtClock()}] 【반려 서약】 목걸이가 공명하며 '${partner.name}'(${partner.club})와(과) 초기 짝으로 묶였습니다!`, true);
+    }
+  }
+  refreshGameUI();
+};
+
+// 3. 연인식 동료 영입 난이도 상향 (기본 하트 2개, 짝 교체 시 하트 3개)
+const _baseInteractNearNpc = interactNearNpc;
+interactNearNpc = async function(npcName, askJoin = false) {
+  if (!askJoin || play.gameMode !== 'lover') {
+    return await _baseInteractNearNpc(npcName, askJoin);
+  }
+  if (!isHumanPlayerName(npcName)) {
+    const curAff = getAffinity(npcName);
+    const reqHearts = play.brokeInitialPartner ? 3 : 2;
+    if (curAff < reqHearts) {
+      const warnTxt = play.brokeInitialPartner
+        ? `기존 짝을 해제한 이력 때문에 ${npcName}이(가) 강하게 경계하고 있다! (호감도 ♥♥♥♡♡ 이상 필요 · 현재 ${renderHearts(curAff)})`
+        : `연인식 규칙에서는 깊은 신뢰가 필요하다. (호감도 ♥♥♡♡♡ 이상 필요 · 현재 ${renderHearts(curAff)})`;
+      await appendGameLog(`[${fmtClock()}] ${warnTxt}`, true);
+      pushDialogueToChat(`${npcName} (${renderHearts(curAff)})`, '아직 서로를 믿고 목숨을 맡길 사이는 아닌 것 같아.', { zone: play.me.zone, broadcast: true });
+      return;
+    }
+  }
+  await _baseInteractNearNpc(npcName, askJoin);
+};
+
+// 짝 해제 감지 (연인식에서 기존 짝을 풀면 brokeInitialPartner = true)
+const _baseDoAllyAction = doAllyAction;
+doAllyAction = async function(kind) {
+  const targetAlly = play.me.selectedAlly || play.me.allies[0];
+  await _baseDoAllyAction(kind);
+  if (kind === 'break' && play.gameMode === 'lover' && targetAlly) {
+    play.brokeInitialPartner = true;
+    await appendGameLog(`[${fmtClock()}] 【서약 파기】 기존 짝과의 유대가 끊어져 다른 참가자들의 경계심이 높아졌습니다. (새 영입 요구 호감도 ♥3)`, true);
+  }
+};
+
+// 4. 허기 감소 속도 현실화 (시간당 플레이어 -5, NPC -4)
+applyHourlyConditions = async function() {
+  if (!play.me.alive || play.finished) return;
+  const m = play.me;
+  m.hunger = Math.max(0, Math.round(m.hunger - 5));
+  if (m.hunger < 30) {
+    if (addMyCondition('굶주림')) {
+      await appendGameLog(`[${fmtClock()}] 허기가 30 미만으로 떨어져 '굶주림' 상태가 되었다. (현재 허기 ${m.hunger})`, true);
+    }
+  } else {
+    removeMyCondition('굶주림');
+  }
+
+  if (hasCondition('출혈') || hasCondition('중독')) {
+    const activeDot = ['출혈', '중독'].filter(x => hasCondition(x)).join('·');
+    m.hp = Math.max(0, m.hp - 1);
+    await appendGameLog(`[${fmtClock()}] ${activeDot} 영향으로 HP -1`, true);
+    if (play.pid) await sb.from('room_players').update({ hp: m.hp, alive: m.hp > 0 }).eq('id', play.pid);
+    if (m.hp === 0) {
+      play.deathReason = activeDot;
+      await handleMeDead(activeDot);
+    }
+  } else if (m.hunger === 0) {
+    m.hp = Math.max(0, m.hp - 2);
+    await appendGameLog(`[${fmtClock()}] 극심한 허기로 HP -2`, true);
+    if (play.pid) await sb.from('room_players').update({ hp: m.hp, alive: m.hp > 0 }).eq('id', play.pid);
+    if (m.hp === 0) {
+      play.deathReason = '아사';
+      await handleMeDead('아사');
+    }
+  }
+
+  await broadcastMyStateSync();
+
+  for (const p of play.players.filter(x => x.is_npc && x.alive)) {
+    const st = getNpcState(p.name);
+    st.hunger = Math.max(0, st.hunger - 4);
+    if (st.hunger < 35) {
+      const fIdx = st.bag.findIndex(i => i.type === 'food');
+      if (fIdx >= 0) {
+        const eaten = st.bag.splice(fIdx, 1)[0];
+        st.hunger = Math.min(100, st.hunger + (eaten.val || 25));
+        if (play.me.allies.includes(p.name)) {
+          await appendGameLog(`[${fmtClock()}] 동료 ${p.name}이(가) 소지하던 '${eaten.name}'을(를) 먹어 허기를 채웠다. (${st.hunger}/100)`, true);
+        }
+      }
+    }
+    if ((p.hp || 15) <= 9) {
+      const hIdx = st.bag.findIndex(i => i.type === 'heal');
+      if (hIdx >= 0) {
+        const med = st.bag.splice(hIdx, 1)[0];
+        p.hp = Math.min(15, (p.hp || 15) + (med.val || 5));
+        st.hp = p.hp;
+        await sb.from('room_players').update({ hp: p.hp }).eq('id', p.id);
+        if (play.me.allies.includes(p.name)) {
+          await appendGameLog(`[${fmtClock()}] 동료 ${p.name}이(가) '${med.name}'을(를) 사용해 상처를 치료했다. (HP ${p.hp}/15)`, true);
+        }
+      }
+    }
+  }
+};
+
+// 5. 연인식 전용 특수 선택지 [목걸이를 맞대고 함께 끝낸다] UI 노출
+const _baseRefreshGameUIForLover = refreshGameUI;
+refreshGameUI = function() {
+  _baseRefreshGameUIForLover();
+  const actCol = document.getElementById('refActionCol');
+  if (!actCol) return;
+  let pactBtn = document.getElementById('refBtnLoverPact');
+
+  const leftZones = ISLAND_ZONES.length - (play.banned || []).length;
+  const partnerName = (play.me.allies || [])[0];
+  const partnerAlive = partnerName && play.players.some(p => p.name === partnerName && p.alive);
+  const maxBond = partnerName && !isHumanPlayerName(partnerName) && getAffinity(partnerName) >= 5;
+  const showPact = play.me.alive && !play.finished && play.gameMode === 'lover' && partnerAlive && (leftZones <= 4 || maxBond);
+
+  if (showPact) {
+    if (!pactBtn) {
+      pactBtn = document.createElement('button');
+      pactBtn.type = 'button';
+      pactBtn.id = 'refBtnLoverPact';
+      pactBtn.className = 'ref-act-btn';
+      pactBtn.style.background = '#141c30';
+      pactBtn.style.color = '#eae2ce';
+      pactBtn.style.borderColor = '#eae2ce';
+      pactBtn.textContent = '목걸이를 맞대고 함께 끝낸다';
+      pactBtn.onclick = () => triggerLoverDoubleSuicide(partnerName);
+      const nearTitle = actCol.querySelector('.ref-panel-bar');
+      if (nearTitle) actCol.insertBefore(pactBtn, nearTitle);
+      else actCol.appendChild(pactBtn);
+    }
+    pactBtn.disabled = isSleepingNow || play.actionSec > 0;
+  } else if (pactBtn) {
+    pactBtn.remove();
+  }
+};
+// =========================================================================
+// [5단계 패치] 오프닝 6컷 + 32명 지급품 공지 + 10종 희생 컷신 + 엔딩 분기
+// =========================================================================
+
+let cutsceneQueue = [];
+let cutsceneIdx = 0;
+let cutsceneDoneCallback = null;
+let cutsceneWaitingPeers = false;
+let storyDonePeers = new Set();
+let endgameTriggered = false;
+
+// 1. 컷신 제어 함수 (index.html의 #cutsceneModal 연동)
+function startCutscene(slides, onComplete, headerTag = '第 57 回') {
+  cutsceneQueue = Array.isArray(slides) ? slides : [];
+  cutsceneIdx = 0;
+  cutsceneDoneCallback = onComplete || null;
+  cutsceneWaitingPeers = false;
+
+  const modal = document.getElementById('cutsceneModal');
+  const hTag = document.getElementById('cutsceneHeaderTag');
+  const skipBtn = document.getElementById('cutsceneSkipBtn');
+  if (!modal || !cutsceneQueue.length) {
+    if (cutsceneDoneCallback) cutsceneDoneCallback();
+    return;
+  }
+  if (hTag) hTag.textContent = headerTag;
+  if (skipBtn) skipBtn.style.display = '';
+  play.paused = true;
+  modal.classList.add('open');
+  renderCutsceneSlide();
+}
+
+function renderCutsceneSlide() {
+  const slide = cutsceneQueue[cutsceneIdx];
+  if (!slide) return finishCutscene();
+  const visBox = document.getElementById('cutsceneVisualBox');
+  const dlgBox = document.getElementById('cutsceneDialogue');
+  const curEl = document.getElementById('cutsceneCursor');
+  if (visBox) visBox.innerHTML = slide.visual || '';
+  if (dlgBox) dlgBox.innerHTML = slide.text || '';
+  if (curEl) curEl.textContent = (cutsceneIdx >= cutsceneQueue.length - 1) ? '■' : '▼';
+}
+
+function advanceCutscene() {
+  if (cutsceneWaitingPeers) return;
+  sfx.click();
+  cutsceneIdx++;
+  if (cutsceneIdx >= cutsceneQueue.length) {
+    finishCutscene();
+  } else {
+    renderCutsceneSlide();
+  }
+}
+
+function skipCutscene() {
+  if (cutsceneWaitingPeers) return;
+  sfx.click();
+  finishCutscene();
+}
+
+async function finishCutscene() {
+  const modal = document.getElementById('cutsceneModal');
+  if (modal) modal.classList.remove('open');
+  play.paused = false;
+  const cb = cutsceneDoneCallback;
+  cutsceneDoneCallback = null;
+  if (cb) await cb();
+}
+
+// 2. 오프닝 6컷 생성 (위 타이틀 화면 고정, 아래 대사창만 변경)
+function buildOpeningCutscenes(c) {
+  const wepName = play.me.bag[0]?.name || '무기';
+  const foodName = play.me.bag[1]?.name || '식량';
+  const utilName = play.me.bag[2]?.name || '도구';
+
+  const fixedVisual = play.gameMode === 'lover'
+    ? `<div style="font-size:28px;letter-spacing:6px;color:#eae2ce;">第 57 回 · 戀人式</div><div style="font-size:12px;color:#8eb8ff;margin-top:8px;">— 연인식 프로젝트 —</div>`
+    : `<div style="font-size:28px;letter-spacing:6px;color:#eae2ce;">第 57 回 · 成人式</div><div style="font-size:12px;color:#8eb8ff;margin-top:8px;">— 성인식 프로젝트 —</div>`;
+
+  const bagSlide = {
+    visual: fixedVisual,
+    text: `가방을 열어보니 <strong>[${esc(wepName)}]</strong>, <strong>[${esc(foodName)}]</strong>, <strong>[${esc(utilName)}]</strong>이(가) 들어 있었다.`
+  };
+
+  if (play.gameMode === 'lover') {
+    const pName = play.initialPartnerName || play.me.allies[0] || '반려';
+    return [
+      { visual: fixedVisual, text: `차가운 철문이 닫히고, 목에 채워진 쇠목걸이에서 낮은 전자음이 울린다.` },
+      { visual: fixedVisual, text: `어른들은 말했다. 혼자서는 결코 어른이 될 수 없으니, 반드시 서로를 지킬 짝을 찾으라고.` },
+      { visual: fixedVisual, text: `목걸이가 붉게 점멸하며 당신의 반려로 <strong>[${esc(pName)}]</strong>을(를) 지정했다.` },
+      { visual: fixedVisual, text: `이 섬을 나갈 수 있는 것은 오직 <strong>살아남은 한 연인</strong>뿐. 짝을 잃은 채 홀로 남으면 목걸이가 작동한다.` },
+      { visual: fixedVisual, text: `반드시 둘이서 끝까지 살아남아라. 제 57회 연인식이 지금 시작된다.` },
+      bagSlide
+    ];
+  }
+
+  return [
+    { visual: fixedVisual, text: `눈을 뜨자 낯선 섬의 서늘한 바닷바람과 함께 목걸이의 잠금장치가 맞물렸다.` },
+    { visual: fixedVisual, text: `통제실의 스피커가 울린다. "오늘부로 너희는 보호받는 아이가 아니다. 스스로의 생존을 증명해라."` },
+    { visual: fixedVisual, text: `동급생도, 같은 동아리 부원도 모두 이 섬에서는 경쟁자일 뿐이다.` },
+    { visual: fixedVisual, text: `<strong>"오직 1명만이 어른이 되어 섬을 나간다."</strong> 동맹을 맺더라도 마지막 순간엔 단 한 명만 남는다.` },
+    { visual: fixedVisual, text: `시간마다 금지 구역이 늘어난다. 살아남아 섬의 문을 열어라.` },
+    bagSlide
+  ];
+}
+// 3. 전 참가자 지급 무기 공지 비활성화
+async function announceAllStarterWeapons() {
+  return;
+}
+// 4. launchPlay 확장: 오프닝 컷신 재생 + 멀티 전원 열람 동기화 + 지급품 공지
+const _baseLaunchPlayWithCutscene = launchPlay;
+launchPlay = async function(code, isHost, c, spawnNpcCount = null, isSolo = false, opts = {}) {
+  endgameTriggered = false;
+  storyDonePeers = new Set();
+  await _baseLaunchPlayWithCutscene(code, isHost, c, spawnNpcCount, isSolo, opts);
+
+  const slides = buildOpeningCutscenes(c);
+  const headerTag = play.gameMode === 'lover' ? '第 57 回 · 戀人式' : '第 57 回 · 成人式';
+
+  startCutscene(slides, async () => {
+    if (play.isSolo) {
+      await announceAllStarterWeapons();
+      return;
+    }
+
+    const myName = c?.name || '실험체';
+    storyDonePeers.add(myName);
+    const humanPlayers = play.players.filter(p => !p.is_npc);
+    const totalHumans = Math.max(1, humanPlayers.length);
+
+    await sb.from('room_messages').insert([{
+      room_code: play.code,
+      sender: myName,
+      zone: 'all',
+      msg_type: 'story_done',
+      content: myName
+    }]);
+
+    if (storyDonePeers.size < totalHumans) {
+      cutsceneWaitingPeers = true;
+      play.paused = true;
+      const modal = document.getElementById('cutsceneModal');
+      const visBox = document.getElementById('cutsceneVisualBox');
+      const dlgBox = document.getElementById('cutsceneDialogue');
+      const skipBtn = document.getElementById('cutsceneSkipBtn');
+      const curEl = document.getElementById('cutsceneCursor');
+      if (skipBtn) skipBtn.style.display = 'none';
+      if (curEl) curEl.textContent = '…';
+      if (visBox) visBox.innerHTML = `<div style="font-size:16px;color:#8eb8ff;">【 대기 중 】</div>`;
+      if (dlgBox) dlgBox.innerHTML = `다른 실험체들이 이야기를 마칠 때까지 대기하는 중입니다... (${storyDonePeers.size} / ${totalHumans}명 완료)`;
+      if (modal) modal.classList.add('open');
+
+      // 18초 안전 타임아웃 (네트워크 지연 시 무한 대기 방지)
+      setTimeout(async () => {
+        if (cutsceneWaitingPeers) {
+          cutsceneWaitingPeers = false;
+          play.paused = false;
+          if (modal) modal.classList.remove('open');
+          await announceAllStarterWeapons();
+        }
+      }, 18000);
+    } else {
+      await announceAllStarterWeapons();
+    }
+  }, headerTag);
+};
+
+// 5. 실시간 메시지에서 story_done 및 특수 엔딩/치료 패킷 수신 처리
+const _baseBindGameRealtime = bindGameRealtime;
+bindGameRealtime = function() {
+  _baseBindGameRealtime();
+  if (!play.code) return;
+  const syncChan = sb.channel('ext-sync-' + play.code)
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'room_messages', filter: `room_code=eq.${play.code}` }, async p => {
+      const msg = p.new;
+      const myName = getPickedChar()?.name;
+
+      if (msg.msg_type === 'story_done') {
+        storyDonePeers.add(msg.sender);
+        const totalHumans = Math.max(1, play.players.filter(x => !x.is_npc).length);
+        if (cutsceneWaitingPeers) {
+          const dlgBox = document.getElementById('cutsceneDialogue');
+          if (dlgBox) dlgBox.innerHTML = `다른 실험체들이 이야기를 마칠 때까지 대기하는 중입니다... (${storyDonePeers.size} / ${totalHumans}명 완료)`;
+          if (storyDonePeers.size >= totalHumans) {
+            cutsceneWaitingPeers = false;
+            play.paused = false;
+            const modal = document.getElementById('cutsceneModal');
+            if (modal) modal.classList.remove('open');
+            await announceAllStarterWeapons();
+          }
+        }
+      } else if (msg.msg_type === 'p2p_evt' && msg.sender !== myName) {
+        try {
+          const ev = JSON.parse(msg.content);
+          if (ev.kind === 'medic_heal' && ev.to === myName) {
+            play.me.hp = Math.min(play.me.maxHp, play.me.hp + (ev.healAmt || 5));
+            if (Array.isArray(ev.cures)) ev.cures.forEach(cn => removeMyCondition(cn));
+            if (play.pid) await sb.from('room_players').update({ hp: play.me.hp }).eq('id', play.pid);
+            await appendGameLog(`[${fmtClock()}] 【보건부 치료】 ${msg.sender}님이 '${ev.itemName}'(으)로 치료해 주었습니다! (HP ${play.me.hp}/${play.me.maxHp})`, true);
+            await broadcastMyStateSync();
+            refreshGameUI();
+          } else if (ev.kind === 'bat_chat' && modalState.mode === 'battle' && modalState.battleId === ev.battleId) {
+            appendModalBattleLog(`[채팅] ${msg.sender}: ${ev.text}`);
+          } else if (ev.kind === 'lover_pact_end' && ev.to === myName && !endgameTriggered) {
+            await playDoubleSuicideEnding(msg.sender);
+          }
+        } catch (e) {}
+      }
+    })
+    .subscribe();
+};
+
+// 6. 10종 성격별 동료 희생 대사 스크립트
+const TRAIT_SACRIFICE_SCRIPTS = {
+  '호전적': '하, 마지막까지 살아남는 놈이 제일 강한 거랬지. 내 몫까지 짓밟고 걸어 나가라고. …야, 절대 뒤돌아보지 마. 네가 이기는 게 곧 내가 이기는 거니까.',
+  '겁쟁이': '무서워… 사실 지금도 손이 너무 떨려서 죽을 것 같아. 그치만 네가 죽는 건 더 무서워…! 그러니까 내 몫까지 꼭 살아남아 줘, 응…?',
+  '기회주의': '계산이 완전히 틀려먹었네. 내 목숨을 걸고 너를 살리는 게, 내 인생에서 제일 밑지는 장사일 줄 알았는데… 이상하게 후회가 안 돼. 잘 살아남아.',
+  '이타적': '괜찮아, 울지 마. 처음부터 너를 지킬 수 있다면 그것만으로 충분하다고 생각했으니까. 부디 섬 밖에서 내 몫까지 따뜻하게 살아 줘.',
+  '냉정형': '생존 확률을 계산해 봤다. 둘 중 하나만 나갈 수 있다면, 네가 살아남는 쪽이 가장 합리적인 결론이야. …감상적인 말은 생략하지. 반드시 살아나가라.',
+  '신중형': '수십 번을 고민하고 내린 결정이야. 네가 내 곁에서 보여준 믿음에 보답할 방법은 이것뿐이니까. 마지막 문이 열릴 때까지 절대 방심하지 마.',
+  '감정형': '이 비극의 마지막 장면은 내가 장식할게! 네가 살아남아서 나를 기억해 준다면, 나는 영원히 죽지 않는 거잖아…! 사랑했어, 정말로!',
+  '자유형': '어른들이 짜놓은 각본대로 서로 죽이는 건 재미없잖아? 내 마지막 선택은 내가 정해. 넌 자유롭게 밖으로 걸어 나가, 그게 내 소원이야.',
+  '관찰형': '네가 걸어온 모든 발자국을 지켜봐 왔어. 너라면 이 지옥을 끝내고도 무너지지 않을 거야. 내 마지막 기록은 네 생존으로 완성할게.',
+  '돌격형': '마지막 길을 뚫는 건 내 역할이지! 어정쩡하게 망설이지 말고 당당하게 걸어 나가라고! 네 앞길은 내가 전부 열어 뒀으니까!'
+};
+
+// 7. 엔딩 컷신 연출 함수 (칭호 지급 없이 엔딩 컷신 분기 후 결과 보고서 연결)
+async function playAdultWinEnding() {
+  if (endgameTriggered) return;
+  endgameTriggered = true;
+  closeCenterModal();
+  const c = getPickedChar();
+  const slides = [
+    {
+      visual: `<div style="font-size:22px;color:#eae2ce;">【 成人式 · 최후의 1인 】</div>`,
+      text: `섬의 모든 소음이 멎었다. 살아남은 숨결은 오직 <strong>${esc(c?.name || '당신')}</strong> 하나뿐이다.`
+    },
+    {
+      visual: `<div style="font-size:16px;color:#8eb8ff;">목걸이 잠금 해제</div>`,
+      text: `철컥— 목을 조이던 쇠목걸이가 바닥으로 떨어지고, 선착장의 굳게 닫힌 철문이 열린다.`
+    },
+    {
+      visual: `<div style="font-size:20px;font-weight:bold;color:#eae2ce;">생존자 : ${esc(c?.name || '실험체')} (1위)</div>`,
+      text: `제 57회 성인식 종료. 당신은 피로 물든 섬을 뒤로하고 홀로 바깥세상으로 걸어 나갔다.`
+    }
+  ];
+  startCutscene(slides, async () => {
+    play.deathReason = '제 57회 성인식 최후의 1인 우승';
+    play.deathRank = 1;
+    await recordCharResult(1, true);
+    await finishAndCleanupRoom('성인식 우승', play.deathReason, 1, true);
+  }, '第 57 回 · 成人式 終幕');
+}
+
+async function playAdultSacrificeEnding(allyName) {
+  if (endgameTriggered) return;
+  endgameTriggered = true;
+  closeCenterModal();
+  const c = getPickedChar();
+  const npc = NPC_ROSTER.find(n => n.name === allyName);
+  const trait = npc?.trait || '이타적';
+  const script = TRAIT_SACRIFICE_SCRIPTS[trait] || TRAIT_SACRIFICE_SCRIPTS['이타적'];
+
+  const allyRow = play.players.find(p => p.name === allyName);
+  if (allyRow) {
+    allyRow.alive = false;
+    allyRow.hp = 0;
+    await sb.from('room_players').update({ hp: 0, alive: false }).eq('id', allyRow.id);
+  }
+
+  const slides = [
+    {
+      visual: `<div style="font-size:18px;color:#eae2ce;">【 최종 국면 · 2인 생존 】</div>`,
+      text: `섬에 남은 사람은 당신과 <strong>${esc(allyName)}</strong>, 단 두 명뿐. 성인식의 규칙은 오직 1명의 생존만을 허락한다.`
+    },
+    {
+      visual: `<div style="font-size:16px;color:#8eb8ff;">${esc(allyName)} (${esc(trait)} · ♥♥♥♥♥)</div>`,
+      text: `${esc(allyName)}이(가) 무기를 내려놓고 당신을 향해 희미하게 웃어 보였다.`
+    },
+    {
+      visual: `<div style="font-size:15px;color:#eae2ce;">"${esc(allyName)}"</div>`,
+      text: `"${esc(script)}"`
+    },
+    {
+      visual: `<div style="font-size:20px;font-weight:bold;color:#eae2ce;">엔딩 · 남겨진 자의 걸음</div>`,
+      text: `총성과 함께 ${esc(allyName)}의 목걸이가 멈췄다. 당신은 그 희생을 가슴에 품은 채 열린 문 밖으로 걸어 나갔다.`
+    }
+  ];
+  startCutscene(slides, async () => {
+    play.deathReason = `${allyName}의 희생으로 성인식 최종 생존`;
+    play.deathRank = 1;
+    await recordCharResult(1, true);
+    await finishAndCleanupRoom('동료 희생 엔딩', play.deathReason, 1, true);
+  }, '第 57 回 · 犧牲 終幕');
+}
+
+async function playLoverPairWinEnding(partnerName) {
+  if (endgameTriggered) return;
+  endgameTriggered = true;
+  closeCenterModal();
+  const c = getPickedChar();
+  const slides = [
+    {
+      visual: `<div style="font-size:22px;color:#eae2ce;">【 戀人式 · 최후의 한 쌍 】</div>`,
+      text: `모든 경쟁자가 쓰러지고, 섬에는 <strong>${esc(c?.name || '당신')}</strong>과(와) <strong>${esc(partnerName)}</strong> 단 두 사람만이 남았다.`
+    },
+    {
+      visual: `<div style="font-size:16px;color:#8eb8ff;">반려 서약 성립</div>`,
+      text: `두 사람의 목걸이가 동시에 푸른 빛을 내며 잠금이 풀린다. 규칙이 요구한 '한 쌍'이 완성된 것이다.`
+    },
+    {
+      visual: `<div style="font-size:20px;font-weight:bold;color:#eae2ce;">공동 우승 : ${esc(c?.name || '당신')} & ${esc(partnerName)}</div>`,
+      text: `제 57회 연인식 종료. 두 사람은 서로의 손을 맞잡은 채 안개 낀 해안선 너머로 함께 걸어 나갔다.`
+    }
+  ];
+  startCutscene(slides, async () => {
+    play.deathReason = `${partnerName}과(와) 함께 제 57회 연인식 공동 우승`;
+    play.deathRank = 1;
+    await recordCharResult(1, true);
+    await finishAndCleanupRoom('연인식 공동 우승', play.deathReason, 1, true);
+  }, '第 57 回 · 戀人式 終幕');
+}
+
+async function playLoverSolitudeDeathEnding() {
+  if (endgameTriggered) return;
+  endgameTriggered = true;
+  closeCenterModal();
+  const c = getPickedChar();
+  const slides = [
+    {
+      visual: `<div style="font-size:20px;color:#ffb4a2;">【 경고 · 반려 부재 】</div>`,
+      text: `모든 적을 쓰러뜨리고 최후의 1인이 되었지만, 당신의 곁에는 함께할 짝이 남아 있지 않다.`
+    },
+    {
+      visual: `<div style="font-size:16px;color:#8eb8ff;">통제실 안내 방송</div>`,
+      text: `"연인식 규칙 위반. 홀로 남은 자에게는 구원이 허락되지 않는다."`
+    },
+    {
+      visual: `<div style="font-size:20px;font-weight:bold;color:#ffb4a2;">엔딩 · 고독한 신부</div>`,
+      text: `붉은 경고음과 함께 목걸이가 폭발했다. 끝까지 살아남고도 짝을 잃은 당신은 차가운 바닥 위로 쓰러졌다.`
+    }
+  ];
+  startCutscene(slides, async () => {
+    play.me.alive = false;
+    play.me.hp = 0;
+    play.deathReason = '연인식 규칙 위반 처형 (고독한 신부)';
+    play.deathRank = 1;
+    if (play.pid) await sb.from('room_players').update({ hp: 0, alive: false }).eq('id', play.pid);
+    await recordCharResult(1, false);
+    await finishAndCleanupRoom('고독사 처형', play.deathReason, 1, true);
+  }, '第 57 回 · 規則 違反');
+}
+
+async function triggerLoverDoubleSuicide(partnerName) {
+  if (endgameTriggered || !play.me.alive) return;
+  if (!confirm(`${partnerName}과(와) 목걸이를 맞대고 함께 생을 마감하시겠습니까?`)) return;
+  if (!play.isSolo && play.code && isHumanPlayerName(partnerName)) {
+    const c = getPickedChar();
+    await sb.from('room_messages').insert([{
+      room_code: play.code,
+      sender: c?.name || '유저',
+      zone: play.me.zone,
+      msg_type: 'p2p_evt',
+      content: JSON.stringify({ kind: 'lover_pact_end', to: partnerName })
+    }]);
+  }
+  await playDoubleSuicideEnding(partnerName);
+}
+
+async function playDoubleSuicideEnding(partnerName) {
+  if (endgameTriggered) return;
+  endgameTriggered = true;
+  closeCenterModal();
+  const c = getPickedChar();
+  const aliveCnt = Math.max(2, play.players.filter(p => p.alive).length);
+  const slides = [
+    {
+      visual: `<div style="font-size:20px;color:#eae2ce;">【 맹세의 끝 】</div>`,
+      text: `어른들이 강요한 살육의 무대 위에서, 당신과 <strong>${esc(partnerName)}</strong>은(는) 서로를 해치는 대신 같은 선택을 내렸다.`
+    },
+    {
+      visual: `<div style="font-size:16px;color:#8eb8ff;">두 개의 목걸이가 맞닿는 소리</div>`,
+      text: `"적어도 마지막 순간만큼은, 우리가 스스로 고른 결말로 끝내자."`
+    },
+    {
+      visual: `<div style="font-size:20px;font-weight:bold;color:#eae2ce;">엔딩 · 비익련리 (比翼連理)</div>`,
+      text: `눈부신 섬광과 함께 두 사람의 시간이 동시에 멈췄다. 지옥 같은 섬 위에서, 둘은 영원히 헤어지지 않는 한 쌍이 되었다.`
+    }
+  ];
+  startCutscene(slides, async () => {
+    play.me.alive = false;
+    play.me.hp = 0;
+    play.deathReason = `${partnerName}과(와) 동반 자결 (비익련리)`;
+    play.deathRank = aliveCnt;
+    if (play.pid) await sb.from('room_players').update({ hp: 0, alive: false }).eq('id', play.pid);
+    await recordCharResult(aliveCnt, false);
+    await finishAndCleanupRoom('비익련리 엔딩', play.deathReason, aliveCnt, true);
+  }, '第 57 回 · 比翼連理');
+}
+
+// 8. 1초마다 실시간 생존자 수 감시 → 성인식/연인식 최종 국면 자동 분기
+setInterval(async () => {
+  if (play.finished || endgameTriggered || !play.me.alive || !play.code) return;
+  const aliveList = play.players.filter(p => p.alive);
+  const totalAlive = aliveList.length;
+
+  // 성인식 모드 최종 국면 체크
+  if (play.gameMode !== 'lover') {
+    if (totalAlive === 1 && aliveList[0]?.id === play.pid) {
+      await playAdultWinEnding();
+    } else if (totalAlive === 2 && play.me.allies.length === 1) {
+      const allyName = play.me.allies[0];
+      const allyAlive = aliveList.some(p => p.name === allyName);
+      if (allyAlive && !isHumanPlayerName(allyName)) {
+        const pts = getAffinityPoints(allyName);
+        if (pts >= 100 || getAffinity(allyName) >= 5) {
+          await playAdultSacrificeEnding(allyName);
+        } else {
+          // 호감도 100pt 미만이면 강제 동맹 파기 및 배신 교전
+          play.me.allies = [];
+          play.me.selectedAlly = null;
+          const allyRow = aliveList.find(p => p.name === allyName);
+          await appendGameLog(`[${fmtClock()}] 【배신】 최후의 2인이 되자 ${allyName}이(가) 동맹을 파기하고 칼을 겨눴다!`, true);
+          pushDialogueToChat(allyName, '미안하지만… 여기서 나갈 수 있는 건 단 한 명뿐이야!', { zone: play.me.zone, broadcast: true });
+          if (allyRow && !modalState.mode) {
+            await startBattleModal(allyRow.id, { ambush: true });
+          }
+        }
+      }
+    }
+  } else {
+    // 연인식 모드 최종 국면 체크
+    const partnerName = play.me.allies[0];
+    const partnerAlive = partnerName && aliveList.some(p => p.name === partnerName);
+
+    if (totalAlive === 2 && partnerAlive) {
+      await playLoverPairWinEnding(partnerName);
+    } else if (totalAlive === 1 && aliveList[0]?.id === play.pid && !partnerAlive) {
+      await playLoverSolitudeDeathEnding();
+    }
+  }
+}, 1000);
+// =========================================================================
+// [추가 패치] 캐릭터별 상세 전적 & 역대 순위 히스토리 기록
+// =========================================================================
+
+function parseCharRankHistory(c) {
+  if (!c || !c.title) return [];
+  try {
+    const parsed = JSON.parse(c.title);
+    return Array.isArray(parsed) ? parsed.map(Number).filter(n => n >= 1 && n <= 32) : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+// 1. 게임 종료 시 캐릭터별 순위 기록 누적 저장
+recordCharResult = async function(rankNum, isWin) {
+  if (play.recordedFinish) return;
+  play.recordedFinish = true;
+  const c = getPickedChar();
+  if (!c) return;
+
+  const nextPlays = (c.plays || 0) + 1;
+  const nextWins = (c.wins || 0) + (isWin ? 1 : 0);
+  const nextBest = c.best_rank ? Math.min(c.best_rank, rankNum) : rankNum;
+
+  const hist = parseCharRankHistory(c);
+  hist.unshift(rankNum); // 최신 순위를 맨 앞에 추가
+  const trimmedHist = hist.slice(0, 15); // 최근 15판까지 보관
+  const serializedHist = JSON.stringify(trimmedHist);
+
+  await sb.from('user_characters').update({
+    plays: nextPlays,
+    wins: nextWins,
+    best_rank: nextBest,
+    title: serializedHist
+  }).eq('id', c.id);
+
+  c.plays = nextPlays;
+  c.wins = nextWins;
+  c.best_rank = nextBest;
+  c.title = serializedHist;
+};
+
+// 2. 캐릭터 상세 창에 총 게임 횟수 / 1위 횟수 / 최고·평균 순위 / 최근 순위 목록 표시
+openDetailView = function(id) {
+  pickedCharId = id;
+  const c = getPickedChar();
+  if (!c) return openPickerView();
+  const idx = charList.findIndex(x => x.id === id) + 1;
+  const pBox = document.getElementById('detailPortrait');
+  pBox.innerHTML = c.avatar_data ? `<img src="${c.avatar_data}" alt="">` : esc(c.name.slice(0, 1));
+  document.getElementById('detailName').textContent = c.name;
+  document.getElementById('detailLine1').textContent = `실험체-${c.exp_number} · ${c.club} · 슬롯 ${idx}`;
+  document.getElementById('detailStats').textContent = `근력 ${c.str} · 민첩 ${c.agi} · 운 ${c.luk} · 재주 ${c.dex}`;
+
+  const hist = parseCharRankHistory(c);
+  const bestTxt = c.best_rank ? `${c.best_rank}위` : '-';
+  const avgTxt = hist.length
+    ? `${(hist.reduce((a, b) => a + b, 0) / hist.length).toFixed(1)}위`
+    : (c.best_rank ? `${c.best_rank}위` : '-');
+
+  document.getElementById('detailRecordLine').textContent =
+    (c.plays || 0) === 0
+      ? '첫 시뮬레이션을 앞두고 있다'
+      : `총 ${c.plays}회 · 1위 ${c.wins || 0}회 · 최고 ${bestTxt} · 평균 ${avgTxt}`;
+
+  const histEl = document.getElementById('detailRankHistoryVal');
+  if (histEl) {
+    if (hist.length > 0) {
+      histEl.innerHTML = hist.map((r, i) => {
+        const badgeStyle = r === 1
+          ? 'background:#eae2ce;color:#141c30;padding:1px 5px;font-weight:bold;'
+          : 'background:#1b2642;color:#dce8ff;border:1px solid #526a9c;padding:1px 5px;';
+        return `<span style="display:inline-block;margin:2px 3px 2px 0;${badgeStyle}">${i === 0 ? '최근 ' : ''}${r}위</span>`;
+      }).join('');
+    } else if ((c.plays || 0) > 0 && c.best_rank) {
+      histEl.textContent = `최고 기록 ${c.best_rank}위 (이전 버전 플레이 ${c.plays}회)`;
+    } else {
+      histEl.textContent = '아직 기록된 순위가 없습니다.';
+    }
+  }
+
+  document.getElementById('detailAcctLine').textContent = `${acct.username} 계정으로 로그인됨`;
+  document.getElementById('detailMsg').textContent = '';
+  showView('viewDetail');
+};
