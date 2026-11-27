@@ -10004,629 +10004,666 @@ exportTistoryHtmlLog = function(cause, rankNum, grade, totalScore, finalComment)
   URL.revokeObjectURL(url);
 };
 // =========================================================================
-// [멀티플레이 긴급 버그 패치]
-// 1. 대기실 인원 낙오 방지 (이중 시작 감지 폴링)
-// 2. 로비/대기실 복귀 시 인게임 효과음·채널 완전 종료
-// 3. 다인원 채팅 누락 방지 + 유령끼리 채팅 100% 표시
+// [멀티플레이 최종 통합 패치]
+// 1. 관전(유령) 상태 지도 클릭 시 즉시 순간이동 + 지도 상단 생존 유저 수 표시
+// 2. 멀티모드 동맹 최대 1명 제한 (솔로 2명) + 동맹 공격 원천 차단 (해제 필수)
+// 3. 동맹 NPC 중복 교전 차단 + 교전 중 대상 [공격] 버튼 비활성화
+// 4. 허기 소모 완화 + 식량 가중치 11 / 무기 가중치 3 조정
+// 5. 4인 이상 멀티방 NPC 간 자멸 확률 하향 + 교류/동맹 오클릭 공격 차단
+// =========================================================================
+// [멀티플레이 최종 통합 패치 - 안전 지연 초기화 버전]
+// (타이틀·로그인 화면 간섭 없음 / 기존 game.js 맨 마지막 줄에 이어서 붙여넣기)
+// =========================================================================
+// [멀티 동맹 1명 제한 · 동맹 공격 차단 · 관전 즉시 이동 · 생존 유저 수 표시]
+// =========================================================================
+// [멀티플레이 & 시스템 최종 통합 패치] (중복 제거 · 호감도 초기화 · 안전 지연 로드)
 // =========================================================================
 
-let waitRoomPollTimer = null;
-let activeGameMainChan = null;
-let activeGameArchiveChan = null;
-const renderedChatMsgIds = new Set();
+window.addEventListener('DOMContentLoaded', () => {
+  try {
+    if (typeof play === 'undefined' || typeof ISLAND_ZONES === 'undefined') return;
 
-function cleanupAllInGameBackgroundTasks() {
-  if (play.tickTimer) {
-    clearInterval(play.tickTimer);
-    play.tickTimer = null;
-  }
-  if (waitRoomPollTimer) {
-    clearInterval(waitRoomPollTimer);
-    waitRoomPollTimer = null;
-  }
-  if (activeGameMainChan) {
-    try { sb.removeChannel(activeGameMainChan); } catch (e) {}
-    activeGameMainChan = null;
-  }
-  if (activeGameArchiveChan) {
-    try { sb.removeChannel(activeGameArchiveChan); } catch (e) {}
-    activeGameArchiveChan = null;
-  }
-  play.finished = true;
-}
+    let waitRoomPollTimer = null;
+    let activeGameMainChan = null;
+    let activeGameArchiveChan = null;
+    let networkSyncWatchdog = null;
+    const renderedChatMsgIds = new Set();
+    const inBattlePlayersSet = new Set();
+    let lastPeacefulInteractTs = 0;
+    let lastPeacefulTarget = null;
 
-// 1. 로비/대기실 복귀 시 인게임 타이머 및 실시간 채널 즉시 파기 (효과음 잔류 원천 차단)
-const _baseBackToLobbyForClean = backToLobbyFromGame;
-backToLobbyFromGame = async function() {
-  cleanupAllInGameBackgroundTasks();
-  await _baseBackToLobbyForClean();
-};
-
-const _baseCloseReportForClean = closeReportToLobby;
-closeReportToLobby = async function() {
-  cleanupAllInGameBackgroundTasks();
-  await _baseCloseReportForClean();
-};
-
-const _baseEnterWaitRoomForClean = enterWaitRoom;
-enterWaitRoom = async function(code, isHost, title, maxPlayers = 4, isPrivate = false) {
-  cleanupAllInGameBackgroundTasks();
-  await _baseEnterWaitRoomForClean(code, isHost, title, maxPlayers, isPrivate);
-};
-
-// 2. 대기실 시작 신호 이중화 + 2초 주기 폴링 (6~8명 다인원 낙오 방지)
-async function transitionWaitMemberToGame(roomRow) {
-  if (!waitRoom.code || play.tickTimer) return;
-  const c = getPickedChar();
-  const code = waitRoom.code;
-  const amIHostNow = waitRoom.host || (roomRow && roomRow.host_name === c?.name);
-
-  if (waitRoomPollTimer) { clearInterval(waitRoomPollTimer); waitRoomPollTimer = null; }
-  if (waitRoom.chan) { try { sb.removeChannel(waitRoom.chan); } catch (e) {} waitRoom.chan = null; }
-
-  await launchPlay(code, amIHostNow, c, null, false, {
-    existingPid: play.pid,
-    spawnMode: waitRoom.spawnMode || 'random',
-    ghostChat: waitRoom.ghostChat || 'ghost_only',
-    gameMode: waitRoom.gameMode || 'adult',
-    durationMin: Number(waitRoom.durationMin || 35)
-  });
-}
-
-bindWaitRoomRealtime = function() {
-  if (waitRoom.chan) { try { sb.removeChannel(waitRoom.chan); } catch (e) {} }
-  if (waitRoomPollTimer) { clearInterval(waitRoomPollTimer); waitRoomPollTimer = null; }
-
-  waitRoom.chan = sb.channel('wait-' + waitRoom.code)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'room_players', filter: `room_code=eq.${waitRoom.code}` }, async () => {
-      await reloadWaitRoomMembers();
-      const myAv = getPickedChar()?.avatar_data;
-      if (myAv && waitRoom.code) {
-        await sb.from('room_messages').insert([{
-          room_code: waitRoom.code, sender: getPickedChar().name, zone: 'wait', msg_type: 'wait_avatar', content: myAv
-        }]);
+    // 0. 이전 회차 호감도 · NPC 상태 · 동맹 · 교전 잠금 완전 초기화 함수
+    function resetSessionRelationshipsAndStates() {
+      if (typeof npcStateMap === 'object' && npcStateMap !== null) {
+        Object.keys(npcStateMap).forEach(k => delete npcStateMap[k]);
       }
-    })
-    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'room_messages', filter: `room_code=eq.${waitRoom.code}` }, async p => {
-      const msg = p.new;
-      if (msg.msg_type === 'wait_chat' && msg.sender !== getPickedChar()?.name) {
-        appendWaitChat(msg.sender, msg.content);
-      } else if (msg.msg_type === 'wait_avatar' && msg.sender !== getPickedChar()?.name) {
-        humanStateMap[msg.sender] = { ...(humanStateMap[msg.sender] || {}), avatar: msg.content };
-        renderWaitRoomUI();
-      } else if (msg.msg_type === 'wait_opt') {
-        try {
-          const parsed = JSON.parse(msg.content);
-          waitRoom.gameMode = parsed.gameMode || 'adult';
-          waitRoom.spawnMode = parsed.spawnMode || 'random';
-          waitRoom.ghostChat = parsed.ghostChat || 'ghost_only';
-          waitRoom.durationMin = Number(parsed.durationMin || 35);
-          renderWaitRoomUI();
-        } catch (e) {}
-      } else if (msg.msg_type === 'game_start_signal') {
-        await transitionWaitMemberToGame(null);
-      } else if (msg.msg_type === 'room_deleted') {
+      if (typeof humanStateMap === 'object' && humanStateMap !== null) {
+        Object.keys(humanStateMap).forEach(k => delete humanStateMap[k]);
+      }
+      if (typeof npcAffinityMap === 'object' && npcAffinityMap !== null) {
+        Object.keys(npcAffinityMap).forEach(k => delete npcAffinityMap[k]);
+      }
+      if (play && play.me) {
+        play.me.allies = [];
+        play.me.selectedAlly = null;
+        if (typeof play.me.affinity === 'object' && play.me.affinity !== null) {
+          play.me.affinity = {};
+        }
+      }
+      inBattlePlayersSet.clear();
+      renderedChatMsgIds.clear();
+    }
+
+    function cleanupAllInGameBackgroundTasks() {
+      if (play.tickTimer) { clearInterval(play.tickTimer); play.tickTimer = null; }
+      if (waitRoomPollTimer) { clearInterval(waitRoomPollTimer); waitRoomPollTimer = null; }
+      if (networkSyncWatchdog) { clearInterval(networkSyncWatchdog); networkSyncWatchdog = null; }
+      if (activeGameMainChan) { try { sb.removeChannel(activeGameMainChan); } catch (e) {} activeGameMainChan = null; }
+      if (activeGameArchiveChan) { try { sb.removeChannel(activeGameArchiveChan); } catch (e) {} activeGameArchiveChan = null; }
+      play.finished = true;
+      resetSessionRelationshipsAndStates();
+    }
+
+    // 새 게임 시작 시 이전 판 호감도/동맹 0으로 초기화 보장
+    if (typeof launchPlay === 'function') {
+      const _baseLaunchPlay = launchPlay;
+      launchPlay = async function(...args) {
+        resetSessionRelationshipsAndStates();
+        const res = await _baseLaunchPlay.apply(this, args);
+        resetSessionRelationshipsAndStates();
+        if (typeof refreshGameUI === 'function') refreshGameUI();
+        return res;
+      };
+    }
+
+    // 로비/대기실 복귀 시 백그라운드 타이머·채널·호감도 즉시 정리
+    if (typeof backToLobbyFromGame === 'function') {
+      const _baseBackLobby = backToLobbyFromGame;
+      backToLobbyFromGame = async function() {
+        cleanupAllInGameBackgroundTasks();
+        await _baseBackLobby();
+      };
+    }
+    if (typeof closeReportToLobby === 'function') {
+      const _baseCloseReport = closeReportToLobby;
+      closeReportToLobby = async function() {
+        cleanupAllInGameBackgroundTasks();
+        await _baseCloseReport();
+      };
+    }
+    if (typeof enterWaitRoom === 'function') {
+      const _baseEnterWait = enterWaitRoom;
+      enterWaitRoom = async function(code, isHost, title, maxPlayers = 4, isPrivate = false) {
+        cleanupAllInGameBackgroundTasks();
+        await _baseEnterWait(code, isHost, title, maxPlayers, isPrivate);
+      };
+    }
+
+    // 1. 대기실 시작 신호 이중화 + 2초 주기 폴링 (다인원 낙오 방지)
+    async function transitionWaitMemberToGame(roomRow) {
+      if (!waitRoom.code || play.tickTimer) return;
+      const c = getPickedChar();
+      const code = waitRoom.code;
+      const amIHostNow = waitRoom.host || (roomRow && roomRow.host_name === c?.name);
+
+      if (waitRoomPollTimer) { clearInterval(waitRoomPollTimer); waitRoomPollTimer = null; }
+      if (waitRoom.chan) { try { sb.removeChannel(waitRoom.chan); } catch (e) {} waitRoom.chan = null; }
+
+      await launchPlay(code, amIHostNow, c, null, false, {
+        existingPid: play.pid,
+        spawnMode: waitRoom.spawnMode || 'random',
+        ghostChat: waitRoom.ghostChat || 'ghost_only',
+        gameMode: waitRoom.gameMode || 'adult',
+        durationMin: Number(waitRoom.durationMin || 35)
+      });
+    }
+
+    if (typeof bindWaitRoomRealtime === 'function') {
+      bindWaitRoomRealtime = function() {
+        if (waitRoom.chan) { try { sb.removeChannel(waitRoom.chan); } catch (e) {} }
         if (waitRoomPollTimer) { clearInterval(waitRoomPollTimer); waitRoomPollTimer = null; }
-        if (waitRoom.chan) { try { sb.removeChannel(waitRoom.chan); } catch (e) {} waitRoom.chan = null; }
-        waitRoom.code = null; play.pid = null;
-        alert('방이 삭제되어 로비로 이동합니다.');
-        await startWithCurrentChar();
-      }
-    })
-    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'rooms', filter: `code=eq.${waitRoom.code}` }, async p => {
-      if (p.new && p.new.status === 'playing') {
-        await transitionWaitMemberToGame(p.new);
-      }
-    })
-    .subscribe();
 
-  // 실시간 이벤트가 누락되더라도 2초마다 방 상태를 확인해 전원 동시 입장 보장
-  waitRoomPollTimer = setInterval(async () => {
-    if (!waitRoom.code || document.getElementById('viewWaitRoom')?.classList.contains('active') === false) {
-      clearInterval(waitRoomPollTimer);
-      waitRoomPollTimer = null;
-      return;
+        waitRoom.chan = sb.channel('wait-' + waitRoom.code)
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'room_players', filter: `room_code=eq.${waitRoom.code}` }, async () => {
+            await reloadWaitRoomMembers();
+            const myAv = getPickedChar()?.avatar_data;
+            if (myAv && waitRoom.code) {
+              await sb.from('room_messages').insert([{
+                room_code: waitRoom.code, sender: getPickedChar().name, zone: 'wait', msg_type: 'wait_avatar', content: myAv
+              }]);
+            }
+          })
+          .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'room_messages', filter: `room_code=eq.${waitRoom.code}` }, async p => {
+            const msg = p.new;
+            if (msg.msg_type === 'wait_chat' && msg.sender !== getPickedChar()?.name) {
+              appendWaitChat(msg.sender, msg.content);
+            } else if (msg.msg_type === 'wait_avatar' && msg.sender !== getPickedChar()?.name) {
+              humanStateMap[msg.sender] = { ...(humanStateMap[msg.sender] || {}), avatar: msg.content };
+              renderWaitRoomUI();
+            } else if (msg.msg_type === 'wait_opt') {
+              try {
+                const parsed = JSON.parse(msg.content);
+                waitRoom.gameMode = parsed.gameMode || 'adult';
+                waitRoom.spawnMode = parsed.spawnMode || 'random';
+                waitRoom.ghostChat = parsed.ghostChat || 'ghost_only';
+                waitRoom.durationMin = Number(parsed.durationMin || 35);
+                renderWaitRoomUI();
+              } catch (e) {}
+            } else if (msg.msg_type === 'game_start_signal') {
+              await transitionWaitMemberToGame(null);
+            } else if (msg.msg_type === 'room_deleted') {
+              if (waitRoomPollTimer) { clearInterval(waitRoomPollTimer); waitRoomPollTimer = null; }
+              if (waitRoom.chan) { try { sb.removeChannel(waitRoom.chan); } catch (e) {} waitRoom.chan = null; }
+              waitRoom.code = null; play.pid = null;
+              alert('방이 삭제되어 로비로 이동합니다.');
+              await startWithCurrentChar();
+            }
+          })
+          .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'rooms', filter: `code=eq.${waitRoom.code}` }, async p => {
+            if (p.new && p.new.status === 'playing') await transitionWaitMemberToGame(p.new);
+          })
+          .subscribe();
+
+        waitRoomPollTimer = setInterval(async () => {
+          if (!waitRoom.code || document.getElementById('viewWaitRoom')?.classList.contains('active') === false) {
+            clearInterval(waitRoomPollTimer);
+            waitRoomPollTimer = null;
+            return;
+          }
+          const { data: rData } = await sb.from('rooms').select('status, host_name').eq('code', waitRoom.code).maybeSingle();
+          if (rData && rData.status === 'playing') await transitionWaitMemberToGame(rData);
+        }, 2000);
+      };
     }
-    const { data: rData } = await sb.from('rooms').select('status, host_name').eq('code', waitRoom.code).maybeSingle();
-    if (rData && rData.status === 'playing') {
-      await transitionWaitMemberToGame(rData);
+
+    if (typeof hostStartWaitRoomMatch === 'function') {
+      const _baseHostStart = hostStartWaitRoomMatch;
+      hostStartWaitRoomMatch = async function() {
+        if (waitRoomPollTimer) { clearInterval(waitRoomPollTimer); waitRoomPollTimer = null; }
+        const code = waitRoom.code;
+        await _baseHostStart();
+        if (code) {
+          await sb.from('room_messages').insert([{
+            room_code: code, sender: 'SYS', zone: 'wait', msg_type: 'game_start_signal', content: 'start'
+          }]);
+        }
+      };
     }
-  }, 2000);
-};
 
-const _baseHostStartForSignal = hostStartWaitRoomMatch;
-hostStartWaitRoomMatch = async function() {
-  if (waitRoomPollTimer) { clearInterval(waitRoomPollTimer); waitRoomPollTimer = null; }
-  const code = waitRoom.code;
-  await _baseHostStartForSignal();
-  if (code) {
-    // 대기실 멤버들에게 강제 입장 신호 브로드캐스트
-    await sb.from('room_messages').insert([{
-      room_code: code, sender: 'SYS', zone: 'wait', msg_type: 'game_start_signal', content: 'start'
-    }]);
-  }
-};
-
-// 3. 인게임 채팅 수신 강화 (다인원 누락 방지 + 유령끼리는 비공개 설정에서도 서로 대화 표시)
-function handleIncomingGameMessage(msg) {
-  if (!msg || play.finished) return;
-  // 현재 게임 화면이 아니면 효과음/채팅 처리 중단
-  if (!document.getElementById('viewGame')?.classList.contains('active')) return;
-
-  if (msg.id) {
-    if (renderedChatMsgIds.has(msg.id)) return;
-    renderedChatMsgIds.add(msg.id);
-  }
-
-  const myName = getPickedChar()?.name;
-  const myZone = String(play.me.zone || '').trim();
-  const msgZone = String(msg.zone || '').trim();
-  const amIDead = !play.me.alive;
-
-  // 유령 채팅 처리: 유령끼리는 무조건 보이고, 생존자는 'public_ghost'일 때만 보임
-  if (msg.msg_type === 'ghost') {
-    if (msg.sender === myName) return;
-    const canSeeGhost = amIDead || play.ghostChat === 'public_ghost';
-    if (canSeeGhost) {
-      appendRefChat(`[사망] ${msg.sender}`, msg.content, false, false, getParticipantAvatar(msg.sender));
-    }
-    return;
-  }
-
-  // 일반 채팅 처리: 같은 구역이면 무조건 표시 (사망자/관전자도 현재 구역 대화 열람 가능)
-  if (!msg.msg_type || msg.msg_type === 'normal') {
-    if (msg.sender === myName) return;
-    if (msgZone === myZone || msgZone === 'all') {
-      appendRefChat(msg.sender, msg.content, false, false, getParticipantAvatar(msg.sender));
-    }
-    return;
-  }
-
-  if (msg.msg_type === 'npc_say') {
-    if (msgZone === myZone) {
-      try {
-        const parsed = JSON.parse(msg.content);
-        appendRefChat(msg.sender, parsed.text || msg.content, false, false, null, parsed.npcMood || null);
-      } catch (e) {
-        appendRefChat(msg.sender, msg.content, false);
+    // 2. 관전(유령) 즉시 순간이동 + 지도 상단 생존 유저 수 표시
+    window.jumpSpectatorToZone = function(zoneId) {
+      if (!play || play.me.alive || play.finished) return false;
+      const zObj = ISLAND_ZONES.find(z => z.id === zoneId);
+      if (!zObj) return false;
+      play.me.zone = zoneId;
+      play.movingTo = null;
+      play.moveSec = 0;
+      if (typeof appendGameLog === 'function') {
+        appendGameLog(`[${fmtClock()}] [관전 이동] '${zObj.name}' 구역으로 이동했습니다.`, true);
       }
-    }
-    return;
-  }
+      if (typeof refreshGameUI === 'function') refreshGameUI();
+      if (typeof drawIslandMap === 'function') drawIslandMap();
+      return true;
+    };
 
-  if (msg.msg_type === 'sys') {
-    if (msg.content.includes('사망했습니다') || msg.content.includes('자결했습니다') || msg.content.includes('금지 구역에서 처형')) {
-      sfx.deathAlert();
-      setMarqueeAlert(msg.content.replace('[속보] ', ''));
-    }
-    appendRefChat('SYS', msg.content, true);
-    appendGameLog(`[${fmtClock()}] ${msg.content}`, true);
-    refreshGameUI();
-    return;
-  }
+    const attachSpectatorCanvas = () => {
+      const cv = document.getElementById('islandCanvas');
+      if (!cv || cv._spectatorTeleportBound) return;
+      cv._spectatorTeleportBound = true;
+      cv.addEventListener('click', (ev) => {
+        if (!play || play.me.alive || play.finished) return;
+        const rect = cv.getBoundingClientRect();
+        if (!rect.width || !rect.height) return;
+        const clickX = ((ev.clientX - rect.left) / rect.width) * 460;
+        const clickY = ((ev.clientY - rect.top) / rect.height) * 244;
 
-  if (msg.msg_type === 'state_sync' && msg.sender !== myName) {
-    try {
-      const st = JSON.parse(msg.content);
-      humanStateMap[msg.sender] = { ...(humanStateMap[msg.sender] || {}), ...st };
-      const pRow = play.players.find(pl => pl.name === msg.sender);
-      if (pRow) {
-        if (typeof st.hp === 'number') pRow.hp = st.hp;
-        if (typeof st.alive === 'boolean') pRow.alive = st.alive;
-        if (st.zone) pRow.zone = st.zone;
-      }
-      refreshGameUI();
-    } catch (e) {}
-    return;
-  }
-
-  if (msg.msg_type === 'time_sync' && !play.host) {
-    try {
-      const t = JSON.parse(msg.content);
-      play.day = t.day;
-      play.minutes = t.minutes;
-      play.closeSec = t.closeSec;
-      play.nextBanned = t.nextBanned || [];
-      play.banned = t.banned || [];
-      if (t.durationMin) play.durationMin = t.durationMin;
-      refreshGameUI();
-      drawIslandMap();
-    } catch (e) {}
-    return;
-  }
-
-  if (msg.msg_type === 'close_warn' && !play.host) {
-    try {
-      const w = JSON.parse(msg.content);
-      play.nextBanned = w.nextBanned || [];
-      sfx.beep();
-      setMarqueeAlert(w.alertMsg || '금지 구역 경고!');
-      appendGameLog(`[${fmtClock()}] 【경고】 ${w.alertMsg}`, true);
-      drawIslandMap();
-    } catch (e) {}
-    return;
-  }
-
-  if (msg.msg_type === 'close_exec' && !play.host) {
-    try {
-      const ex = JSON.parse(msg.content);
-      play.banned = ex.banned || [];
-      play.nextBanned = [];
-      sfx.siren();
-      setMarqueeAlert(`${(ex.closedNames || []).join(', ')} 구역 폐쇄!`);
-      appendGameLog(`[${fmtClock()}] 【구역 폐쇄】 ${(ex.closedNames || []).join(', ')} 구역이 금지 구역으로 지정되었다!`, true);
-      drawIslandMap();
-      if (play.me.alive && play.banned.includes(play.me.zone)) {
-        handleMeDead('금지 구역 체류로 인한 목걸이 폭발');
-      }
-    } catch (e) {}
-  }
-}
-
-bindGameRealtime = function() {
-  if (!play.code) return;
-  if (activeGameMainChan) { try { sb.removeChannel(activeGameMainChan); } catch (e) {} }
-  if (activeGameArchiveChan) { try { sb.removeChannel(activeGameArchiveChan); } catch (e) {} }
-  renderedChatMsgIds.clear();
-
-  activeGameMainChan = sb.channel('game-room-' + play.code)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'room_players', filter: `room_code=eq.${play.code}` }, async () => {
-      if (play.finished) return;
-      const { data } = await sb.from('room_players').select('*').eq('room_code', play.code);
-      if (data) {
-        play.players = data;
-        refreshGameUI();
-        drawIslandMap();
-      }
-    })
-    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'room_messages', filter: `room_code=eq.${play.code}` }, p => {
-      const msg = p.new;
-      if (!msg) return;
-
-      // 아카이브 수집
-      const myName = getPickedChar()?.name;
-      if (msg.msg_type === 'sys') {
-        fullSessionChatLog.push({ time: fmtClock(), zoneName: '전체 방송', sender: 'SYS', text: msg.content, isSys: true, avatar: null });
-      } else if (msg.sender !== myName && (!msg.msg_type || msg.msg_type === 'normal' || msg.msg_type === 'ghost')) {
-        const zObj = ISLAND_ZONES.find(x => x.id === msg.zone);
-        const senderLabel = msg.msg_type === 'ghost' ? `[사망] ${msg.sender}` : msg.sender;
-        fullSessionChatLog.push({
-          time: fmtClock(),
-          zoneName: zObj ? zObj.name : (msg.zone || '전체'),
-          sender: senderLabel,
-          text: msg.content,
-          isSys: false,
-          avatar: getParticipantAvatar(msg.sender)
+        let closestZone = null;
+        let minDist = 32;
+        ISLAND_ZONES.forEach(z => {
+          const d = Math.hypot(z.x - clickX, z.y - clickY);
+          if (d < minDist) { minDist = d; closestZone = z; }
         });
+        if (closestZone) {
+          ev.stopImmediatePropagation();
+          window.jumpSpectatorToZone(closestZone.id);
+        }
+      }, true);
+    };
+    attachSpectatorCanvas();
+    setTimeout(attachSpectatorCanvas, 1200);
+
+    if (typeof onZoneClick === 'function') {
+      const _baseOnZoneClick = onZoneClick;
+      onZoneClick = async function(zoneId) {
+        if (window.jumpSpectatorToZone(zoneId)) return;
+        await _baseOnZoneClick(zoneId);
+      };
+    }
+    if (typeof moveToZone === 'function') {
+      const _baseMoveToZone = moveToZone;
+      moveToZone = async function(zoneId) {
+        if (window.jumpSpectatorToZone(zoneId)) return;
+        await _baseMoveToZone(zoneId);
+      };
+    }
+
+    if (typeof drawIslandMap === 'function') {
+      const _baseDrawMap = drawIslandMap;
+      drawIslandMap = function() {
+        _baseDrawMap();
+        const cv = document.getElementById('islandCanvas');
+        if (!cv) return;
+        const dpr = window.devicePixelRatio || 1;
+        const cx = cv.getContext('2d');
+        if (!cx) return;
+        const aliveUsersCnt = (play.players || []).filter(p => !p.is_npc && p.alive).length;
+        const isMono = document.body.classList.contains('theme-mono');
+        cx.save();
+        cx.scale(dpr, dpr);
+        cx.font = '10px DungGeunMo, monospace';
+        cx.textAlign = 'left';
+        cx.fillStyle = isMono ? 'rgba(45, 45, 45, 0.72)' : 'rgba(174, 198, 240, 0.72)';
+        cx.fillText(`유저 ${aliveUsersCnt}명 생존`, 10, 16);
+        if (!play.me.alive && !play.finished) {
+          cx.fillText('· 관전중 (구역 클릭 즉시 이동)', 10, 29);
+        }
+        cx.restore();
+      };
+    }
+
+    // 3. 멀티모드 동맹 1명 제한 (솔로 2명) + 동맹 공격 불가 + 교전 중 중복 공격 잠금 + 교류 오클릭 차단
+    const getMaxAllies = () => (play.isSolo ? 2 : 1);
+
+    function markPlayersInBattle(names, isFighting) {
+      (names || []).forEach(nm => {
+        if (!nm) return;
+        if (isFighting) inBattlePlayersSet.add(nm);
+        else inBattlePlayersSet.delete(nm);
+      });
+    }
+
+    document.addEventListener('click', (ev) => {
+      const btn = ev.target && ev.target.closest ? ev.target.closest('#refNearList button') : null;
+      if (!btn) return;
+      const label = (btn.textContent || '').trim();
+      if (label.includes('교류') || label.includes('동맹') || label.includes('치료') || label.includes('선물')) {
+        const onclickAttr = btn.getAttribute('onclick') || '';
+        const m = onclickAttr.match(/\(['"]([^'"]+)['"]\)/);
+        lastPeacefulInteractTs = Date.now();
+        lastPeacefulTarget = m ? m[1] : null;
       }
+    }, true);
 
-      handleIncomingGameMessage(msg);
-    })
-    .subscribe();
-};
-// =========================================================================
-// [교전 중 중복 공격 차단 패치] 이미 싸우는 대상은 '도와주기' 외 공격 불가
-// =========================================================================
-
-const inBattlePlayersSet = new Set();
-
-function markPlayersInBattle(names, isFighting) {
-  (names || []).forEach(nm => {
-    if (!nm) return;
-    if (isFighting) inBattlePlayersSet.add(nm);
-    else inBattlePlayersSet.delete(nm);
-  });
-}
-
-// 1. 전투 시작 시 전투 참여자들을 교전 중 목록에 등록 & 방 전체 브로드캐스트
-const _baseStartBattleForLock = startBattleWithTarget;
-startBattleWithTarget = async function(targetName) {
-  const c = getPickedChar();
-  if (!c || !play.me.alive) return;
-
-  // 상대가 이미 다른 사람과 교전 중이면 공격 원천 차단 (동맹 도와주기는 별도 함수로 진입)
-  const isAlreadyFighting = inBattlePlayersSet.has(targetName) || Boolean(humanStateMap[targetName]?.inBattle);
-  if (isAlreadyFighting && !(activePvpSession && (activePvpSession.attacker === targetName || activePvpSession.defender === targetName))) {
-    alert(`${targetName}은(는) 현재 다른 대상과 교전 중입니다. 동맹이 아니라면 난입할 수 없습니다.`);
-    return;
-  }
-
-  markPlayersInBattle([c.name, targetName], true);
-  if (!play.isSolo && play.code) {
-    await sb.from('room_messages').insert([{
-      room_code: play.code,
-      sender: c.name,
-      zone: play.me.zone,
-      msg_type: 'battle_lock_sync',
-      content: JSON.stringify({ fighters: [c.name, targetName], fighting: true })
-    }]);
-  }
-
-  await _baseStartBattleForLock(targetName);
-};
-
-// 2. 전투 모달 종료 시 교전 중 상태 해제 브로드캐스트
-const _baseCloseModalForLock = closeCenterModal;
-closeCenterModal = function() {
-  const c = getPickedChar();
-  const prevEnemy = modalState.enemyName;
-  const wasBattle = modalState.mode === 'battle';
-
-  if (wasBattle && c) {
-    markPlayersInBattle([c.name, prevEnemy], false);
-    if (!play.isSolo && play.code) {
-      sb.from('room_messages').insert([{
-        room_code: play.code,
-        sender: c.name,
-        zone: play.me.zone,
-        msg_type: 'battle_lock_sync',
-        content: JSON.stringify({ fighters: [c.name, prevEnemy].filter(Boolean), fighting: false })
-      }]);
+    if (typeof proposeAlly === 'function') {
+      const _baseProposeAlly = proposeAlly;
+      proposeAlly = async function(targetName) {
+        lastPeacefulInteractTs = Date.now();
+        lastPeacefulTarget = targetName;
+        const maxCap = getMaxAllies();
+        const curAllies = Array.isArray(play.me.allies) ? [...new Set(play.me.allies)] : [];
+        if (curAllies.length >= maxCap) {
+          alert(play.isSolo ? '동맹은 최대 2명까지만 맺을 수 있습니다.' : '멀티플레이 모드에서는 동맹을 최대 1명까지만 맺을 수 있습니다.');
+          return;
+        }
+        if (curAllies.includes(targetName)) {
+          alert(`${targetName}은(는) 이미 동맹입니다.`);
+          return;
+        }
+        await _baseProposeAlly(targetName);
+      };
     }
-  }
-  _baseCloseModalForLock();
-  refreshGameUI();
-};
 
-// 3. 실시간 수신으로 다른 유저들의 교전 시작/종료 상태 동기화
-const _baseHandleMsgForBattleLock = handleIncomingGameMessage;
-handleIncomingGameMessage = function(msg) {
-  if (!msg || play.finished) return;
-  if (msg.msg_type === 'battle_lock_sync') {
-    try {
-      const data = JSON.parse(msg.content);
-      markPlayersInBattle(data.fighters || [], Boolean(data.fighting));
-      refreshGameUI();
-    } catch (e) {}
-    return;
-  }
-  if (msg.msg_type === 'pvp_engage_v2') {
-    try {
-      const ev = JSON.parse(msg.content);
-      markPlayersInBattle([ev.attacker, ev.defender], true);
-    } catch (e) {}
-  }
-  _baseHandleMsgForBattleLock(msg);
-};
+    ['acceptAllyRequest', 'respondAllyRequest'].forEach(fnName => {
+      if (typeof window[fnName] === 'function') {
+        const _origAccept = window[fnName];
+        window[fnName] = async function(...args) {
+          const maxCap = getMaxAllies();
+          const curAllies = Array.isArray(play.me.allies) ? [...new Set(play.me.allies)] : [];
+          if (curAllies.length >= maxCap) {
+            alert(play.isSolo ? '동맹은 최대 2명까지만 맺을 수 있습니다.' : '멀티플레이 모드에서는 이미 동맹이 있어 추가 동맹을 수락할 수 없습니다.');
+            if (typeof closeCenterModal === 'function') closeCenterModal();
+            return;
+          }
+          return await _origAccept.apply(this, args);
+        };
+      }
+    });
 
-// 4. 주변 인물 목록 렌더링 후, 교전 중인 비동맹 대상의 '공격' 버튼 비활성화
-const _baseRefreshGameUIForBattleLock = refreshGameUI;
-refreshGameUI = function() {
-  _baseRefreshGameUIForBattleLock();
-  const nearBox = document.getElementById('refNearList');
-  if (!nearBox) return;
+    if (typeof startBattleWithTarget === 'function') {
+      const _baseStartBattle = startBattleWithTarget;
+      startBattleWithTarget = async function(targetName) {
+        const c = getPickedChar();
+        if (!c || !play.me.alive) return;
 
-  nearBox.querySelectorAll('button').forEach(btn => {
-    if (btn.textContent.trim() !== '공격') return;
-    const onclickStr = btn.getAttribute('onclick') || '';
-    const match = onclickStr.match(/startBattleWithTarget\(['"]([^'"]+)['"]\)/);
-    if (!match) return;
-    const targetNm = match[1];
-    const isFighting = inBattlePlayersSet.has(targetNm) || Boolean(humanStateMap[targetNm]?.inBattle);
-    if (isFighting) {
-      btn.disabled = true;
-      btn.textContent = '교전중';
-      btn.title = '현재 다른 인물과 교전 중이어서 공격할 수 없습니다.';
-      btn.style.opacity = '0.45';
-      btn.style.cursor = 'not-allowed';
-    }
-  });
-};
-// =========================================================================
-// [와이파이 지연 대비] 2.5초 주기 DB 강제 동기화 & 유령/전투 상태 자동 복구
-// =========================================================================
+        // 평화 상호작용 직후 리스트 밀림 오클릭 차단
+        if (Date.now() - lastPeacefulInteractTs < 1200 && (!lastPeacefulTarget || lastPeacefulTarget === targetName)) return;
 
-let networkSyncWatchdog = null;
-
-const _baseStartGameLoopsForNet = startGameLoops;
-startGameLoops = function() {
-  _baseStartGameLoopsForNet();
-  if (networkSyncWatchdog) clearInterval(networkSyncWatchdog);
-
-  networkSyncWatchdog = setInterval(async () => {
-    if (play.finished || play.isSolo || !play.code) return;
-    if (!document.getElementById('viewGame')?.classList.contains('active')) return;
-
-    try {
-      // 1. DB에서 최신 전원 생존/HP/구역 상태 직접 조회 (패킷 누락 복구)
-      const { data: latestPlayers } = await sb
-        .from('room_players')
-        .select('*')
-        .eq('room_code', play.code);
-
-      if (Array.isArray(latestPlayers) && latestPlayers.length > 0) {
-        play.players = latestPlayers;
-
-        // 내 캐릭터가 DB상 사망(alive=false 또는 hp<=0)인데 화면만 살아있는 유령 상태면 즉시 사망 동기화
-        const myRow = latestPlayers.find(p => p.id === play.pid || p.name === getPickedChar()?.name);
-        if (myRow && play.me.alive && (myRow.alive === false || (typeof myRow.hp === 'number' && myRow.hp <= 0))) {
-          play.me.hp = 0;
-          if (typeof closeCenterModal === 'function') closeCenterModal();
-          await handleMeDead(play.deathReason || '교전 중 치명상');
+        // 동맹 공격 원천 차단 (해제 필수)
+        const curAllies = Array.isArray(play.me.allies) ? play.me.allies : [];
+        if (curAllies.includes(targetName)) {
+          alert(`동맹(${targetName})은 공격할 수 없습니다. 공격하려면 먼저 동맹을 해제하세요.`);
           return;
         }
 
-        // 내 HP가 DB와 다를 경우 최신화 (내가 살아있을 때)
-        if (myRow && play.me.alive && typeof myRow.hp === 'number' && myRow.hp < play.me.hp) {
-          play.me.hp = myRow.hp;
+        // 이미 교전 중인 대상 중복 공격 차단
+        if (inBattlePlayersSet.has(targetName) || Boolean(humanStateMap[targetName]?.inBattle)) {
+          alert(`${targetName}은(는) 이미 다른 대상과 교전 중입니다.`);
+          return;
         }
 
-        // 이미 사망한 플레이어는 교전 중 잠금 목록에서 자동 해제
-        latestPlayers.forEach(p => {
-          if (!p.alive || (typeof p.hp === 'number' && p.hp <= 0)) {
-            inBattlePlayersSet.delete(p.name);
-          }
-        });
-      }
-
-      // 2. 내 동맹 목록 중 이미 사망한 인원이 남아있으면 자동 정리 (최대 2명 유지)
-      if (Array.isArray(play.me.allies) && play.me.allies.length > 0) {
-        const aliveNameSet = new Set(play.players.filter(p => p.alive).map(p => p.name));
-        play.me.allies = [...new Set(play.me.allies)]
-          .filter(nm => aliveNameSet.has(nm))
-          .slice(0, 2);
-      }
-
-      refreshGameUI();
-    } catch (e) {
-      // 일시적 와이파이 끊김 시 다음 주기에 자동 재시도
-    }
-  }, 2500);
-};
-// ... existing code ...
-// 2. 동맹 NPC가 내가 이미 싸우고 있는 대상을 별도로 또 공격하는 중복 전투 버그 차단 + 교전 중 NPC 공격 버튼 비활성화
-const _baseTriggerNpcAutoAction = typeof triggerNpcAutoAction === 'function' ? triggerNpcAutoAction : null;
-if (_baseTriggerNpcAutoAction) {
-  triggerNpcAutoAction = async function(...args) {
-    // 현재 내가 교전 중인 적 이름과 생존 동맹 목록을 전역 잠금에 반영
-    if (modalState.mode === 'battle' && modalState.enemyName) {
-      inBattlePlayersSet.add(modalState.enemyName);
-      (play.me.allies || []).forEach(allyName => inBattlePlayersSet.add(allyName));
-    }
-    await _baseTriggerNpcAutoAction(...args);
-  };
-}
-
-// NPC가 이미 교전 중인 대상을 또 공격하지 않도록 차단 + 4명 이상 멀티플레이 시 NPC 간 교전 확률 대폭 하향
-const _baseStartGameLoopsForNpcBalance = startGameLoops;
-startGameLoops = function() {
-  _baseStartGameLoopsForNpcBalance();
-};
-
-const _origMathRandom = Math.random;
-// 4명 이상 인간 플레이어가 생존한 멀티방에서는 NPC끼리 서로 죽이는 빈도를 낮춰 게임 템포 유지
-const _baseApplyHourlyForNpcPace = typeof applyHourlyConditions === 'function' ? applyHourlyConditions : null;
-if (_baseApplyHourlyForNpcPace) {
-  applyHourlyConditions = async function() {
-    const prevHunger = play.me.hunger;
-    await _baseApplyHourlyForNpcPace();
-    if (play.me.alive && prevHunger > play.me.hunger) {
-      const loss = prevHunger - play.me.hunger;
-      const refund = Math.floor(loss * 0.35);
-      if (refund > 0) {
-        play.me.hunger = Math.min(100, play.me.hunger + refund);
-        if (play.pid) {
-          await sb.from('room_players').update({ hunger: play.me.hunger }).eq('id', play.pid);
+        markPlayersInBattle([c.name, targetName], true);
+        if (!play.isSolo && play.code) {
+          await sb.from('room_messages').insert([{
+            room_code: play.code, sender: c.name, zone: play.me.zone, msg_type: 'battle_lock_sync',
+            content: JSON.stringify({ fighters: [c.name, targetName], fighting: true })
+          }]);
         }
-      }
-    }
-  };
-}
-
-// 주변 인물 UI에서 싸움 걸린 NPC(및 유저)의 '공격' 버튼을 완전히 비활성화
-const _baseRefreshUIForNpcLock = refreshGameUI;
-refreshGameUI = function() {
-  if (modalState.mode === 'battle' && modalState.enemyName) {
-    inBattlePlayersSet.add(modalState.enemyName);
-  }
-  _baseRefreshUIForNpcLock();
-  const nearBox = document.getElementById('refNearList');
-  if (!nearBox) return;
-
-  nearBox.querySelectorAll('button').forEach(btn => {
-    if (btn.textContent.trim() !== '공격') return;
-    const onclickStr = btn.getAttribute('onclick') || '';
-    const match = onclickStr.match(/startBattleWithTarget\(['"]([^'"]+)['"]\)/);
-    if (!match) return;
-    const targetNm = match[1];
-    if (inBattlePlayersSet.has(targetNm) || Boolean(humanStateMap[targetNm]?.inBattle)) {
-      btn.disabled = true;
-      btn.textContent = '교전중';
-      btn.title = '이미 다른 대상과 싸우고 있어 공격할 수 없습니다.';
-      btn.style.opacity = '0.45';
-      btn.style.cursor = 'not-allowed';
-    }
-  });
-};
-
-// 3. 식량(허기 회복) 가중치 11 조정 / 무기 가중치 3 축소
-pickZoneLootItem = function(zoneId) {
-  const z = ISLAND_ZONES.find(x => x.id === zoneId);
-  const nameList = (z && z.pool && z.pool.length) ? z.pool : LOOT_ITEMS.map(i => i.name);
-  const weighted = [];
-
-  nameList.forEach(nm => {
-    const meta = LOOT_ITEMS.find(i => i.name === nm);
-    const isRare = nm.startsWith('★');
-    let weight = 7; // 일반 물품
-
-    if (nm === '손전등') weight = 7;
-    else if (isRare) weight = 1;
-    else if (meta && meta.type === 'food') weight = 11;   // 식량 가중치 11
-    else if (meta && meta.type === 'weapon') weight = 3;  // 무기 드랍 축소
-    else if (meta && meta.type === 'heal') weight = 4;    // 치료 아이템
-
-    for (let k = 0; k < weight; k++) weighted.push(nm);
-  });
-
-  const chosenName = weighted[Math.floor(Math.random() * weighted.length)] || nameList[0];
-  const found = LOOT_ITEMS.find(i => i.name === chosenName) || LOOT_ITEMS[0];
-  return ensureItemUid({ ...found });
-};
-
-// 4. 4명 이상 멀티방일 때 NPC 간 교전/사망 빈도 낮추기 (방장 루프 보정)
-const _baseTriggerZoneClosure = typeof triggerZoneClosure === 'function' ? triggerZoneClosure : null;
-if (typeof play !== 'undefined') {
-  const _origSbFrom = sb.from.bind(sb);
-  sb.from = function(table) {
-    const q = _origSbFrom(table);
-    if (table === 'room_players' && q && typeof q.update === 'function') {
-      const _origUpdate = q.update.bind(q);
-      q.update = function(payload) {
-        // 방장 자동 루프에서 NPC끼리 교전할 때 인간 플레이어가 4명 이상이면 65% 확률로 교전 스킵
-        const humanAliveCnt = (play.players || []).filter(p => !p.is_npc && p.alive).length;
-        if (!play.isSolo && humanAliveCnt >= 4 && payload && payload.alive === false && payload.hp === 0) {
-          const stack = new Error().stack || '';
-          if (stack.includes('startGameLoops') && _origMathRandom() < 0.65) {
-            // NPC 사망 취소하고 HP 5로 생존 처리
-            return _origUpdate({ hp: 5, alive: true });
-          }
-        }
-        return _origUpdate(payload);
+        await _baseStartBattle(targetName);
       };
     }
-    return q;
-  };
-}
 
-// 5. 유저 간 교류·동맹·치료 클릭 시 의도치 않은 공격 오작동 및 전투 전환 차단
-let lastPeacefulInteractTs = 0;
-let lastPeacefulTarget = null;
+    if (typeof closeCenterModal === 'function') {
+      const _baseCloseModal = closeCenterModal;
+      closeCenterModal = function() {
+        const c = getPickedChar();
+        const prevEnemy = modalState.enemyName;
+        if (modalState.mode === 'battle' && c) {
+          markPlayersInBattle([c.name, prevEnemy], false);
+          if (!play.isSolo && play.code) {
+            sb.from('room_messages').insert([{
+              room_code: play.code, sender: c.name, zone: play.me.zone, msg_type: 'battle_lock_sync',
+              content: JSON.stringify({ fighters: [c.name, prevEnemy].filter(Boolean), fighting: false })
+            }]);
+          }
+        }
+        _baseCloseModal();
+        if (typeof refreshGameUI === 'function') refreshGameUI();
+      };
+    }
 
-function markPeacefulInteraction(targetNm) {
-  lastPeacefulInteractTs = Date.now();
-  lastPeacefulTarget = targetNm || null;
-}
+    // 4. 실시간 채팅 수신 (유령 채팅 비공개 시 유령끼리만 100% 표시 + 교전 잠금 동기화)
+    function handleIncomingGameMessage(msg) {
+      if (!msg || play.finished) return;
+      if (!document.getElementById('viewGame')?.classList.contains('active')) return;
 
-// 비전투 상호작용 함수 래핑 (교류 / 동맹 제안 / 치료)
-['interactWithTarget', 'talkToTarget', 'proposeAlly', 'healTarget', 'giftItemToTarget'].forEach(fnName => {
-  if (typeof window[fnName] === 'function') {
-    const _origPeaceFn = window[fnName];
-    window[fnName] = async function(targetNm, ...rest) {
-      markPeacefulInteraction(targetNm);
-      return await _origPeaceFn.call(this, targetNm, ...rest);
+      if (msg.id) {
+        if (renderedChatMsgIds.has(msg.id)) return;
+        renderedChatMsgIds.add(msg.id);
+      }
+
+      if (msg.msg_type === 'battle_lock_sync') {
+        try {
+          const data = JSON.parse(msg.content);
+          markPlayersInBattle(data.fighters || [], Boolean(data.fighting));
+          if (typeof refreshGameUI === 'function') refreshGameUI();
+        } catch (e) {}
+        return;
+      }
+
+      const myName = getPickedChar()?.name;
+      const myZone = String(play.me.zone || '').trim();
+      const msgZone = String(msg.zone || '').trim();
+      const amIDead = !play.me.alive;
+
+      if (msg.msg_type === 'ghost') {
+        if (msg.sender === myName) return;
+        if (amIDead || play.ghostChat === 'public_ghost') {
+          appendRefChat(`[사망] ${msg.sender}`, msg.content, false, false, getParticipantAvatar(msg.sender));
+        }
+        return;
+      }
+
+      if (!msg.msg_type || msg.msg_type === 'normal') {
+        if (msg.sender === myName) return;
+        if (msgZone === myZone || msgZone === 'all') {
+          appendRefChat(msg.sender, msg.content, false, false, getParticipantAvatar(msg.sender));
+        }
+        return;
+      }
+
+      if (msg.msg_type === 'npc_say') {
+        if (msgZone === myZone) {
+          try {
+            const parsed = JSON.parse(msg.content);
+            appendRefChat(msg.sender, parsed.text || msg.content, false, false, null, parsed.npcMood || null);
+          } catch (e) {
+            appendRefChat(msg.sender, msg.content, false);
+          }
+        }
+        return;
+      }
+
+      if (msg.msg_type === 'sys') {
+        if (msg.content.includes('사망했습니다') || msg.content.includes('자결했습니다') || msg.content.includes('금지 구역에서 처형')) {
+          sfx.deathAlert();
+          setMarqueeAlert(msg.content.replace('[속보] ', ''));
+        }
+        appendRefChat('SYS', msg.content, true);
+        appendGameLog(`[${fmtClock()}] ${msg.content}`, true);
+        refreshGameUI();
+        return;
+      }
+
+      if (msg.msg_type === 'state_sync' && msg.sender !== myName) {
+        try {
+          const st = JSON.parse(msg.content);
+          humanStateMap[msg.sender] = { ...(humanStateMap[msg.sender] || {}), ...st };
+          const pRow = play.players.find(pl => pl.name === msg.sender);
+          if (pRow) {
+            if (typeof st.hp === 'number') pRow.hp = st.hp;
+            if (typeof st.alive === 'boolean') pRow.alive = st.alive;
+            if (st.zone) pRow.zone = st.zone;
+          }
+          refreshGameUI();
+        } catch (e) {}
+        return;
+      }
+
+      if (msg.msg_type === 'time_sync' && !play.host) {
+        try {
+          const t = JSON.parse(msg.content);
+          play.day = t.day; play.minutes = t.minutes; play.closeSec = t.closeSec;
+          play.nextBanned = t.nextBanned || []; play.banned = t.banned || [];
+          if (t.durationMin) play.durationMin = t.durationMin;
+          refreshGameUI(); drawIslandMap();
+        } catch (e) {}
+        return;
+      }
+
+      if (msg.msg_type === 'close_warn' && !play.host) {
+        try {
+          const w = JSON.parse(msg.content);
+          play.nextBanned = w.nextBanned || [];
+          sfx.beep();
+          setMarqueeAlert(w.alertMsg || '금지 구역 경고!');
+          appendGameLog(`[${fmtClock()}] 【경고】 ${w.alertMsg}`, true);
+          drawIslandMap();
+        } catch (e) {}
+        return;
+      }
+
+      if (msg.msg_type === 'close_exec' && !play.host) {
+        try {
+          const ex = JSON.parse(msg.content);
+          play.banned = ex.banned || []; play.nextBanned = [];
+          sfx.siren();
+          setMarqueeAlert(`${(ex.closedNames || []).join(', ')} 구역 폐쇄!`);
+          appendGameLog(`[${fmtClock()}] 【구역 폐쇄】 ${(ex.closedNames || []).join(', ')} 구역이 금지 구역으로 지정되었다!`, true);
+          drawIslandMap();
+          if (play.me.alive && play.banned.includes(play.me.zone)) {
+            handleMeDead('금지 구역 체류로 인한 목걸이 폭발');
+          }
+        } catch (e) {}
+      }
+    }
+
+    bindGameRealtime = function() {
+      if (!play.code) return;
+      if (activeGameMainChan) { try { sb.removeChannel(activeGameMainChan); } catch (e) {} }
+      if (activeGameArchiveChan) { try { sb.removeChannel(activeGameArchiveChan); } catch (e) {} }
+      renderedChatMsgIds.clear();
+
+      activeGameMainChan = sb.channel('game-room-' + play.code)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'room_players', filter: `room_code=eq.${play.code}` }, async () => {
+          if (play.finished) return;
+          const { data } = await sb.from('room_players').select('*').eq('room_code', play.code);
+          if (data) {
+            play.players = data;
+            refreshGameUI();
+            drawIslandMap();
+          }
+        })
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'room_messages', filter: `room_code=eq.${play.code}` }, p => {
+          const msg = p.new;
+          if (!msg) return;
+          const myName = getPickedChar()?.name;
+          if (msg.msg_type === 'sys') {
+            fullSessionChatLog.push({ time: fmtClock(), zoneName: '전체 방송', sender: 'SYS', text: msg.content, isSys: true, avatar: null });
+          } else if (msg.sender !== myName && (!msg.msg_type || msg.msg_type === 'normal' || msg.msg_type === 'ghost')) {
+            const zObj = ISLAND_ZONES.find(x => x.id === msg.zone);
+            const senderLabel = msg.msg_type === 'ghost' ? `[사망] ${msg.sender}` : msg.sender;
+            fullSessionChatLog.push({
+              time: fmtClock(), zoneName: zObj ? zObj.name : (msg.zone || '전체'),
+              sender: senderLabel, text: msg.content, isSys: false, avatar: getParticipantAvatar(msg.sender)
+            });
+          }
+          handleIncomingGameMessage(msg);
+        })
+        .subscribe();
     };
+
+    // 5. 식량 가중치 11 / 무기 3 + 허기 소모 완화 + 4인 이상 NPC 자멸 빈도 하향
+    if (typeof pickZoneLootItem === 'function' && typeof LOOT_ITEMS !== 'undefined') {
+      pickZoneLootItem = function(zoneId) {
+        const z = ISLAND_ZONES.find(x => x.id === zoneId);
+        const nameList = (z && z.pool && z.pool.length) ? z.pool : LOOT_ITEMS.map(i => i.name);
+        const weighted = [];
+        nameList.forEach(nm => {
+          const meta = LOOT_ITEMS.find(i => i.name === nm);
+          let weight = 7;
+          if (nm === '손전등') weight = 7;
+          else if (nm.startsWith('★')) weight = 1;
+          else if (meta && meta.type === 'food') weight = 11;
+          else if (meta && meta.type === 'weapon') weight = 3;
+          else if (meta && meta.type === 'heal') weight = 4;
+          for (let k = 0; k < weight; k++) weighted.push(nm);
+        });
+        const chosenName = weighted[Math.floor(Math.random() * weighted.length)] || nameList[0];
+        const found = LOOT_ITEMS.find(i => i.name === chosenName) || LOOT_ITEMS[0];
+        return typeof ensureItemUid === 'function' ? ensureItemUid({ ...found }) : { ...found };
+      };
+    }
+
+    if (typeof applyHourlyConditions === 'function') {
+      const _baseHourly = applyHourlyConditions;
+      applyHourlyConditions = async function() {
+        const prevHunger = play.me.hunger;
+        await _baseHourly();
+        if (play.me.alive && prevHunger > play.me.hunger) {
+          const refund = Math.floor((prevHunger - play.me.hunger) * 0.35);
+          if (refund > 0) {
+            play.me.hunger = Math.min(100, play.me.hunger + refund);
+            if (play.pid) await sb.from('room_players').update({ hunger: play.me.hunger }).eq('id', play.pid);
+          }
+        }
+      };
+    }
+
+    const _origMathRandom = Math.random;
+    const _origSbFrom = sb.from.bind(sb);
+    sb.from = function(table) {
+      const q = _origSbFrom(table);
+      if (table === 'room_players' && q && typeof q.update === 'function') {
+        const _origUpdate = q.update.bind(q);
+        q.update = function(payload) {
+          const humanAliveCnt = (play.players || []).filter(p => !p.is_npc && p.alive).length;
+          if (!play.isSolo && humanAliveCnt >= 4 && payload && payload.alive === false && payload.hp === 0) {
+            const stack = new Error().stack || '';
+            if (stack.includes('startGameLoops') && _origMathRandom() < 0.65) {
+              return _origUpdate({ hp: 5, alive: true });
+            }
+          }
+          return _origUpdate(payload);
+        };
+      }
+      return q;
+    };
+
+    // 6. UI 통합 갱신 + 와이파이 지연 대비 2.5초 주기 DB 강제 동기화
+    if (typeof refreshGameUI === 'function') {
+      const _baseRefreshUI = refreshGameUI;
+      refreshGameUI = function() {
+        const maxCap = getMaxAllies();
+        if (Array.isArray(play.me.allies)) {
+          play.me.allies = [...new Set(play.me.allies)].slice(0, maxCap);
+        }
+        if (modalState.mode === 'battle' && modalState.enemyName) {
+          inBattlePlayersSet.add(modalState.enemyName);
+        }
+        _baseRefreshUI();
+
+        const nearBox = document.getElementById('refNearList');
+        if (!nearBox) return;
+        const curAllies = Array.isArray(play.me.allies) ? play.me.allies : [];
+
+        nearBox.querySelectorAll('button').forEach(btn => {
+          if (btn.textContent.trim() !== '공격') return;
+          const onclickStr = btn.getAttribute('onclick') || '';
+          const match = onclickStr.match(/startBattleWithTarget\(['"]([^'"]+)['"]\)/);
+          if (!match) return;
+          const targetNm = match[1];
+
+          if (curAllies.includes(targetNm)) {
+            btn.disabled = true;
+            btn.textContent = '동맹중';
+            btn.style.opacity = '0.45';
+            btn.style.cursor = 'not-allowed';
+          } else if (inBattlePlayersSet.has(targetNm) || Boolean(humanStateMap[targetNm]?.inBattle)) {
+            btn.disabled = true;
+            btn.textContent = '교전중';
+            btn.style.opacity = '0.45';
+            btn.style.cursor = 'not-allowed';
+          }
+        });
+      };
+    }
+
+    if (typeof startGameLoops === 'function') {
+      const _baseStartLoops = startGameLoops;
+      startGameLoops = function() {
+        _baseStartLoops();
+        if (networkSyncWatchdog) clearInterval(networkSyncWatchdog);
+        networkSyncWatchdog = setInterval(async () => {
+          if (play.finished || play.isSolo || !play.code) return;
+          if (!document.getElementById('viewGame')?.classList.contains('active')) return;
+          try {
+            const { data: latestPlayers } = await sb.from('room_players').select('*').eq('room_code', play.code);
+            if (Array.isArray(latestPlayers) && latestPlayers.length > 0) {
+              play.players = latestPlayers;
+              const myRow = latestPlayers.find(p => p.id === play.pid || p.name === getPickedChar()?.name);
+              if (myRow && play.me.alive && (myRow.alive === false || (typeof myRow.hp === 'number' && myRow.hp <= 0))) {
+                play.me.hp = 0;
+                if (typeof closeCenterModal === 'function') closeCenterModal();
+                await handleMeDead(play.deathReason || '교전 중 치명상');
+                return;
+              }
+              if (myRow && play.me.alive && typeof myRow.hp === 'number' && myRow.hp < play.me.hp) {
+                play.me.hp = myRow.hp;
+              }
+              latestPlayers.forEach(p => {
+                if (!p.alive || (typeof p.hp === 'number' && p.hp <= 0)) inBattlePlayersSet.delete(p.name);
+              });
+            }
+            if (Array.isArray(play.me.allies) && play.me.allies.length > 0) {
+              const aliveSet = new Set(play.players.filter(p => p.alive).map(p => p.name));
+              play.me.allies = [...new Set(play.me.allies)].filter(nm => aliveSet.has(nm)).slice(0, getMaxAllies());
+            }
+            refreshGameUI();
+          } catch (e) {}
+        }, 2500);
+      };
+    }
+  } catch (err) {
+    console.warn('[Patch Init Warning]', err);
   }
 });
-
-// 주변 인물 영역에서 '교류/동맹/치료' 버튼 클릭 감지 시 즉시 평화 상호작용 잠금 활성화
-document.addEventListener('click', (ev) => {
-  const btn = ev.target && ev.target.closest ? ev.target.closest('#refNearList button') : null;
-  if (!btn) return;
-  const label = (btn.textContent || '').trim();
-  if (label.includes('교류') || label.includes('동맹') || label.includes('치료') || label.includes('선물')) {
-    const onclickAttr = btn.getAttribute('onclick') || '';
-    const m = onclickAttr.match(/\(['"]([^'"]+)['"]\)/);
-    markPeacefulInteraction(m ? m[1] : null);
-  }
-}, true);
-
-// 평화 상호작용 직후 1.2초 이내에 같은 대상(또는 리스트 밀림)으로 들어오는 잘못된 공격 호출 차단
-const _baseStartBattleGuardPeace = startBattleWithTarget;
-startBattleWithTarget = async function(targetName) {
-  const elapsed = Date.now() - lastPeacefulInteractTs;
-  if (elapsed < 1200 && (!lastPeacefulTarget || lastPeacefulTarget === targetName)) {
-    return;
-  }
-  await _baseStartBattleGuardPeace(targetName);
-};
