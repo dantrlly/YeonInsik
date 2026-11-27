@@ -8722,3 +8722,1284 @@ openDetailView = function(id) {
   document.getElementById('detailMsg').textContent = '';
   showView('viewDetail');
 };
+// =========================================================================
+// [밸런스 최종 조정] 음식 가중치 8 + 다대일 단독 항전 공격 피해 +1 보정
+// =========================================================================
+
+// 1. 탐색 드랍 가중치 (일반 8, 음식 8, 힐템 4, 희귀 1)
+pickZoneLootItem = function(zoneId) {
+  const z = ISLAND_ZONES.find(x => x.id === zoneId);
+  const nameList = (z && z.pool && z.pool.length) ? z.pool : LOOT_ITEMS.map(i => i.name);
+  const weighted = [];
+  nameList.forEach(nm => {
+    const meta = LOOT_ITEMS.find(i => i.name === nm);
+    const isRare = nm.startsWith('★');
+    let weight = 8;
+    if (nm === '손전등') weight = 8;
+    else if (isRare) weight = 1;
+    else if (meta && meta.type === 'food') weight = 8; // 음식 가중치 8
+    else if (meta && meta.type === 'heal') weight = 4; // 힐템 드랍 축소
+    for (let k = 0; k < weight; k++) weighted.push(nm);
+  });
+  const chosenName = weighted[Math.floor(Math.random() * weighted.length)] || nameList[0];
+  const found = LOOT_ITEMS.find(i => i.name === chosenName) || LOOT_ITEMS[0];
+  return ensureItemUid({ ...found });
+};
+
+// 2. 플레이어 공격 시: 내가 혼자(1)이고 적 진영이 2명 이상일 때 공격력 +1 보정
+const _baseGetEffectiveWeaponDamageForOutnumbered = getEffectiveWeaponDamage;
+getEffectiveWeaponDamage = function(c) {
+  const res = _baseGetEffectiveWeaponDamageForOutnumbered(c);
+  if (modalState.mode !== 'battle') return res;
+
+  let myCount = 1;
+  let enCount = 1;
+  if (modalState.isMultiBattle && modalState.battleId) {
+    const clash = activeZoneClashes[modalState.battleId];
+    if (clash) {
+      const myTeam = modalState.mySide === 'A' ? clash.sideA : clash.sideB;
+      const enTeam = modalState.mySide === 'A' ? clash.sideB : clash.sideA;
+      myCount = myTeam.filter(x => x.hp > 0).length;
+      enCount = enTeam.filter(x => x.hp > 0).length;
+    }
+  } else {
+    myCount = 1 + (modalState.allyFighters || []).filter(a => a.hp > 0).length;
+    enCount = (modalState.enemyHp > 0 ? 1 : 0) + (modalState.enemyAllyFighter && modalState.enemyAllyFighter.hp > 0 ? 1 : 0);
+  }
+
+  if (myCount === 1 && enCount >= 2) {
+    res.dmg += 1;
+    res.clubAtkMsg = (res.clubAtkMsg || '') + ' [단독 항전 버프: 다수 상대 위력 +1]';
+  }
+  return res;
+};
+
+// 3. 솔로/1:1 전투에서 적(혼자) vs 아군(다수)일 때 적 단독 항전 버프 (피해 +1 & 회피 +15%)
+const _baseMEnemyTurnForOutnumbered = mEnemyTurn;
+mEnemyTurn = async function(singleStep = true) {
+  const myAliveCnt = 1 + (modalState.allyFighters || []).filter(a => a.hp > 0).length;
+  const enAliveCnt = (modalState.enemyHp > 0 ? 1 : 0) + (modalState.enemyAllyFighter && modalState.enemyAllyFighter.hp > 0 ? 1 : 0);
+
+  if (myAliveCnt >= 2 && enAliveCnt === 1 && modalState.enemyHp > 0) {
+    const hpBefore = play.me.hp;
+    await _baseMEnemyTurnForOutnumbered(singleStep);
+    if (play.me.alive && play.me.hp < hpBefore && modalState.mode === 'battle') {
+      const extra = 1;
+      play.me.hp = Math.max(0, play.me.hp - extra);
+      if (play.pid) await sb.from('room_players').update({ hp: play.me.hp, alive: play.me.hp > 0 }).eq('id', play.pid);
+      appendModalBattleLog(`[단독 항전] 수적 열세에 몰린 ${modalState.enemyName}의 필사적인 일격! 추가 피해 -${extra}`);
+      renderModalBattleHp();
+      if (play.me.hp === 0) {
+        const cause = `${modalState.enemyName}의 필사적인 반격`;
+        play.deathReason = cause;
+        await new Promise(r => setTimeout(r, 420));
+        closeCenterModal();
+        await handleMeDead(cause);
+      }
+    }
+    return;
+  }
+  await _baseMEnemyTurnForOutnumbered(singleStep);
+};
+
+// 4. 적 혼자(1) vs 아군 다수(2+)일 때 적의 회피율 +15% 보정
+const _baseGetBattleHitProbForOutnumbered = getBattleHitProb;
+getBattleHitProb = function(c) {
+  let prob = _baseGetBattleHitProbForOutnumbered(c);
+  if (modalState.mode !== 'battle') return prob;
+
+  let myCount = 1;
+  let enCount = 1;
+  if (modalState.isMultiBattle && modalState.battleId) {
+    const clash = activeZoneClashes[modalState.battleId];
+    if (clash) {
+      const myTeam = modalState.mySide === 'A' ? clash.sideA : clash.sideB;
+      const enTeam = modalState.mySide === 'A' ? clash.sideB : clash.sideA;
+      myCount = myTeam.filter(x => x.hp > 0).length;
+      enCount = enTeam.filter(x => x.hp > 0).length;
+    }
+  } else {
+    myCount = 1 + (modalState.allyFighters || []).filter(a => a.hp > 0).length;
+    enCount = (modalState.enemyHp > 0 ? 1 : 0) + (modalState.enemyAllyFighter && modalState.enemyAllyFighter.hp > 0 ? 1 : 0);
+  }
+
+  if (myCount >= 2 && enCount === 1) {
+    prob = Math.max(0.25, prob - 0.15);
+  }
+  return prob;
+};
+// =========================================================================
+// [멀티플레이 보완] 다인 전투에서 혼자 싸우는 상대방 공격력 +1 보정
+// =========================================================================
+const _baseRunNpcTurnsForOutnumbered = runNpcTurnsIfHostInMultiBattle;
+runNpcTurnsIfHostInMultiBattle = async function(clash, forceTakeControl = false) {
+  if (clash && !clash.ended) {
+    const aAlive = (clash.sideA || []).filter(x => x.hp > 0);
+    const bAlive = (clash.sideB || []).filter(x => x.hp > 0);
+    // 혼자 싸우는 진영의 NPC가 있다면 일시적으로 무기 공격력 +1 보정
+    aAlive.forEach(f => { if (f.isNpc) f.weaponAtk = (f._origAtk ?? f.weaponAtk) + (aAlive.length === 1 && bAlive.length >= 2 ? 1 : 0); });
+    bAlive.forEach(f => { if (f.isNpc) f.weaponAtk = (f._origAtk ?? f.weaponAtk) + (bAlive.length === 1 && aAlive.length >= 2 ? 1 : 0); });
+  }
+  await _baseRunNpcTurnsForOutnumbered(clash, forceTakeControl);
+};
+// =========================================================================
+// [테마 전환 & 보고서 등급/막대바 현실화 패치]
+// =========================================================================
+
+let currentUiTheme = localStorage.getItem('yeoninsiki_theme') || 'navy';
+
+function setGlobalTheme(theme) {
+  currentUiTheme = theme === 'mono' ? 'mono' : 'navy';
+  try { localStorage.setItem('yeoninsiki_theme', currentUiTheme); } catch (e) {}
+  document.body.classList.toggle('theme-mono', currentUiTheme === 'mono');
+
+  const btnN = document.getElementById('btnThemeNavy');
+  const btnM = document.getElementById('btnThemeMono');
+  if (btnN) btnN.classList.toggle('on', currentUiTheme === 'navy');
+  if (btnM) btnM.classList.toggle('on', currentUiTheme === 'mono');
+
+  // 컷신 모달 배경도 현재 테마에 맞춰 동기화
+  const csModal = document.getElementById('cutsceneModal');
+  if (csModal) {
+    csModal.style.background = currentUiTheme === 'mono' ? '#E0E0DE' : '#182036';
+  }
+  if (typeof drawIslandMap === 'function') drawIslandMap();
+}
+
+// 초기 로드 시 저장된 테마 즉시 적용
+setGlobalTheme(currentUiTheme);
+
+// 모노 테마일 때 섬 지도 캔버스도 #E0E0DE / #2D2D2D 톤으로 렌더링
+const _baseDrawIslandMap = drawIslandMap;
+drawIslandMap = function() {
+  if (currentUiTheme !== 'mono') return _baseDrawIslandMap();
+
+  const cv = document.getElementById('islandCanvas');
+  if (!cv) return;
+  const dpr = window.devicePixelRatio || 1;
+  const cssW = cv.clientWidth || 460;
+  const cssH = cv.clientHeight || 254;
+  if (cv.width !== Math.round(cssW * dpr) || cv.height !== Math.round(cssH * dpr)) {
+    cv.width = Math.round(cssW * dpr);
+    cv.height = Math.round(cssH * dpr);
+  }
+
+  const cx = cv.getContext('2d');
+  cx.save();
+  cx.scale(dpr, dpr);
+  cx.imageSmoothingEnabled = false;
+
+  const sx = cssW / 460;
+  const sy = cssH / 244;
+  const sMin = Math.min(sx, sy);
+
+  // 배경 #E0E0DE
+  cx.fillStyle = '#E0E0DE';
+  cx.fillRect(0, 0, cssW, cssH);
+
+  cx.fillStyle = '#2D2D2D';
+  cx.font = '11px DungGeunMo, monospace';
+  cx.textAlign = 'left';
+  cx.fillText('~~~', 24 * sx, 226 * sy);
+  cx.fillText('~~', 416 * sx, 34 * sy);
+  cx.fillText('▲N', 426 * sx, 20 * sy);
+
+  // 섬 본체 #2D2D2D
+  cx.fillStyle = '#2D2D2D';
+  cx.beginPath();
+  cx.ellipse(230 * sx, 132 * sy, 182 * sx, 88 * sy, -0.03, 0, Math.PI * 2);
+  cx.fill();
+  for (let a = 0; a < Math.PI * 2; a += Math.PI / 8) {
+    cx.beginPath();
+    cx.arc((230 + Math.cos(a) * 170) * sx, (132 + Math.sin(a) * 78) * sy, 23 * sMin, 0, Math.PI * 2);
+    cx.fill();
+  }
+
+  cx.strokeStyle = '#6E6E6C';
+  cx.lineWidth = 1.2;
+  [[152, 82], [166, 86], [88, 134]].forEach(([mx, my]) => {
+    cx.beginPath();
+    cx.moveTo((mx - 7) * sx, (my + 6) * sy);
+    cx.lineTo(mx * sx, (my - 4) * sy);
+    cx.lineTo((mx + 7) * sx, (my + 6) * sy);
+    cx.stroke();
+  });
+
+  cx.fillStyle = '#4A4A48';
+  cx.beginPath();
+  cx.ellipse(222 * sx, 174 * sy, 22 * sx, 8 * sy, 0, 0, Math.PI * 2);
+  cx.fill();
+
+  cx.strokeStyle = '#9E9E9B';
+  cx.lineWidth = 1.1;
+  cx.setLineDash([2.5, 3]);
+  const drawn = new Set();
+  ISLAND_ZONES.forEach(z => {
+    (z.edges || []).forEach(tid => {
+      const target = ISLAND_ZONES.find(x => x.id === tid);
+      if (!target) return;
+      const key = [z.id, target.id].sort().join('--');
+      if (drawn.has(key)) return;
+      drawn.add(key);
+      cx.beginPath();
+      cx.moveTo(z.x * sx, z.y * sy);
+      cx.lineTo(target.x * sx, target.y * sy);
+      cx.stroke();
+    });
+  });
+  cx.setLineDash([]);
+
+  ISLAND_ZONES.forEach(z => {
+    const zx = z.x * sx, zy = z.y * sy, rad = 15 * sMin;
+    if (play.nextBanned.includes(z.id) && !play.banned.includes(z.id)) {
+      cx.save();
+      cx.strokeStyle = '#E0E0DE';
+      cx.lineWidth = 1.6;
+      cx.setLineDash([3, 3]);
+      cx.beginPath();
+      cx.arc(zx, zy, rad, 0, Math.PI * 2);
+      cx.stroke();
+      cx.restore();
+    }
+    if (play.banned.includes(z.id)) {
+      cx.save();
+      cx.beginPath();
+      cx.arc(zx, zy, rad, 0, Math.PI * 2);
+      cx.fillStyle = '#555553';
+      cx.fill();
+      cx.clip();
+      cx.strokeStyle = '#E0E0DE';
+      cx.lineWidth = 1.5;
+      for (let d = -24; d <= 24; d += 5) {
+        cx.beginPath();
+        cx.moveTo(zx - rad + d, zy - rad);
+        cx.lineTo(zx - rad + d + rad * 1.4, zy + rad);
+        cx.stroke();
+      }
+      cx.restore();
+    }
+  });
+
+  ISLAND_ZONES.forEach(z => {
+    const zx = z.x * sx, zy = z.y * sy;
+    const isMe = play.me.zone === z.id;
+    const isBan = play.banned.includes(z.id);
+
+    cx.fillStyle = isMe ? '#FFFFFF' : (isBan ? '#7A7A78' : '#E0E0DE');
+    cx.fillRect(zx - 3.5, zy - 3.5, 7, 7);
+
+    cx.font = '11px DungGeunMo, monospace';
+    cx.textAlign = 'center';
+    const labelY = zy + 13 * sy;
+    cx.strokeStyle = '#2D2D2D';
+    cx.lineWidth = 2.5;
+    cx.strokeText(z.name, zx, labelY);
+    cx.fillStyle = isBan ? '#9A9A98' : '#E0E0DE';
+    cx.fillText(z.name, zx, labelY);
+
+    if (isMe) {
+      cx.fillStyle = '#FFFFFF';
+      cx.fillText('▼ 나', zx, zy - 7 * sy);
+    }
+  });
+
+  cx.restore();
+};
+
+// 실험 결과 보고서: 막대바 수치 빡빡하게 조정 + 생존 순위(Rank) 반영 등급 상한선 적용
+openResultReport = function(cause, rankNum) {
+  const c = getPickedChar();
+  if (!c) return;
+  const finalCause = play.deathReason || cause;
+  const finalRank = Math.max(1, Math.min(TARGET_HEADCOUNT, Number(play.deathRank || rankNum || 32)));
+  const elapsedSec = Math.max(1, Math.floor((Date.now() - play.sessionStartMs) / 1000));
+  const mm = Math.floor(elapsedSec / 60);
+  const ss = elapsedSec % 60;
+
+  const kills = play.killCount || 0;
+  const combats = play.combatCount || 0;
+  const searches = play.searchCount || 0;
+  const itemGains = play.itemGainCount || 0;
+  const itemUses = play.itemUseCount || 0;
+  const moves = play.moveCount || 0;
+  const socials = play.socialCount || 0;
+  const allies = play.allyCount || 0;
+  const affSum = Object.values(affinityPointsMap || {}).reduce((acc, v) => acc + Math.max(0, v - 8), 0);
+
+  // 순위 기반 생존 비율 (32위=0.0 ~ 1위=1.0)
+  const rankRatio = (TARGET_HEADCOUNT - finalRank) / (TARGET_HEADCOUNT - 1);
+
+  // 막대바 수치 빡빡하게 산출 (초반 탈락 시 막대바가 거의 안 차고, 오래 버텨야 높게 상승)
+  const combatScore = Math.min(100, Math.round(kills * 15 + combats * 4 + rankRatio * 10));
+  const surviveScore = Math.min(100, Math.round(Math.pow(rankRatio, 1.35) * 75 + Math.min(25, (elapsedSec / 900) * 25)));
+  const allyScore = Math.min(100, Math.round(allies * 18 + Math.min(35, affSum * 0.12) + rankRatio * 10));
+  const socialScore = Math.min(100, Math.round(socials * 4 + Math.min(30, affSum * 0.10) + rankRatio * 8));
+  const judgeScore = Math.min(100, Math.round(searches * 4 + moves * 3 + rankRatio * 15));
+  const agilityScore = Math.min(100, Math.round(moves * 3.5 + Math.max(0, combats - kills) * 4 + rankRatio * 20));
+  const witScore = Math.min(100, Math.round(itemGains * 4.5 + itemUses * 5.5 + rankRatio * 12));
+  const actionScore = Math.min(100, Math.round((searches + moves + combats + socials + itemUses) * 2.2 + rankRatio * 12));
+  const copeScore = Math.min(100, Math.round(itemUses * 6 + kills * 8 + (play.me.hp > 0 ? play.me.hp * 1.2 : 0) + rankRatio * 15));
+
+  // 순위 비중(40%) + 9개 항목 평균(60%)으로 종합 점수 산출
+  const avgMetric = (combatScore + surviveScore + allyScore + socialScore + judgeScore + agilityScore + witScore + actionScore + copeScore) / 9;
+  const totalScore = Math.round(rankRatio * 40 + avgMetric * 0.60);
+
+  // 최종 등급 산출 (생존 순위 엄격 제한 적용)
+  let grade = 'D';
+  if (finalRank === 1 && totalScore >= 85) {
+    grade = 'S';
+  } else if (finalRank <= 3 && totalScore >= 72) {
+    grade = 'A';
+  } else if (finalRank <= 10 && totalScore >= 52) {
+    grade = 'B';
+  } else if (finalRank <= 20 && totalScore >= 34) {
+    grade = 'C';
+  } else {
+    grade = 'D';
+  }
+
+  const summaryParts = [];
+  if (finalRank >= 22 || (elapsedSec < 60 && actionScore < 15)) {
+    summaryParts.push('시뮬레이션 초반에 허무하게 탈락하며 뚜렷한 생존 흔적을 남기지 못했다.');
+  } else {
+    if (kills >= 2) summaryParts.push(`직접 ${kills}명을 제압하며 섬의 주도권을 거머쥔 공격적 행보가 돋보였다.`);
+    else if (combats === 0) summaryParts.push('교전을 철저히 회피하며 그림자처럼 몸을 숨기는 생존 전략을 택했다.');
+    else summaryParts.push(`총 ${combats}회의 교전을 겪으며 위기 속에서 버텨냈다.`);
+
+    if (allies >= 2) summaryParts.push(`${allies}명의 동료와 유대를 쌓아 다수의 협력 구도를 이끌어냈다.`);
+    else if (allies === 1) summaryParts.push('단독 행동 대신 한 명의 동료와 호흡을 맞추며 생존을 도모했다.');
+    else if (socials === 0) summaryParts.push('타인과의 교류를 일절 끊은 채 철저한 고독 속에 머물렀다.');
+
+    if (searches >= 4 || itemUses >= 3) summaryParts.push(`탐색 ${searches}회·물자 활용 ${itemUses}회로 현장 자원을 알뜰히 운용했다.`);
+    else if (searches === 0) summaryParts.push('주변 탐색조차 시도하지 않아 물자 부족에 시달렸다.');
+  }
+  const finalComment = summaryParts.join(' ');
+
+  const metrics = [
+    ['전투력', combatScore, `처치 ${kills}명 · 교전 ${combats}회`],
+    ['생존력', surviveScore, `${finalRank}위 · ${play.day}일차 (${mm}분 ${ss}초)`],
+    ['교류력', allyScore, `동료 영입 ${allies}명`],
+    ['사교성', socialScore, `대화·교류 ${socials}회`],
+    ['판단력', judgeScore, `탐색 ${searches}회 · 이동 ${moves}회`],
+    ['순발력', agilityScore, `위기 회피·기동 대응`],
+    ['기지력', witScore, `획득 ${itemGains}개 · 사용 ${itemUses}회`],
+    ['행동력', actionScore, `총 유효 행동 ${searches + moves + combats + socials + itemUses}회`],
+    ['대처력', copeScore, `종료 시 HP ${play.me.hp}/${play.me.maxHp} · 허기 ${play.me.hunger}`]
+  ];
+
+  const card = document.getElementById('reportCard');
+  card.innerHTML = `
+    <div class="report-title">실험 결과 보고서 - 제 ${c.plays || 1}회</div>
+    <div class="report-top">
+      <div class="report-portrait">${play.me.avatar ? `<img src="${play.me.avatar}" alt="">` : esc(c.name.slice(0, 1))}</div>
+      <div>
+        <div style="font-size:15px;font-weight:bold;">${esc(c.name)}</div>
+        <div style="font-size:12px;">실험체-${c.exp_number} · ${esc(c.club)}</div>
+        <div style="font-size:12px;">${finalRank}위 / ${TARGET_HEADCOUNT}명 · ${mm}분 ${ss}초 생존 (종합 ${totalScore}점)</div>
+        <div style="font-size:11px;opacity:0.8;margin-top:3px;">사유: ${esc(finalCause)}</div>
+      </div>
+    </div>
+    <div class="report-grade-stamp">
+      <span style="font-size:9px;">등급</span>
+      <span style="font-size:24px;line-height:1;">${grade}</span>
+    </div>
+    <div class="report-bars">
+      ${metrics.map(([k, v, desc]) => `
+        <div class="report-bar-row">
+          <span>${esc(k)}</span>
+          <div class="report-bar-track"><div class="report-bar-fill" data-w="${v}%"></div></div>
+          <span style="opacity:0.85;font-size:10px;">${esc(desc)}</span>
+        </div>`).join('')}
+    </div>
+    <div style="border:2px solid currentColor;padding:8px;font-size:11px;line-height:1.5;margin-bottom:8px;">
+      <strong>[사후 분석 총평]</strong> ${esc(finalComment)}
+    </div>
+    <input type="text" class="txt-input" id="reportMemoIn" placeholder="한줄 소감을 남기세요 (선택)" maxlength="60" style="margin-bottom:8px;">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+      <button type="button" class="btn-navy" style="width:100%;font-weight:bold;" onclick="exportTistoryHtmlLog('${esc(finalCause)}', ${finalRank}, '${grade}', ${totalScore}, '${esc(finalComment)}')">로그 출력하기 (HTML)</button>
+      <button type="button" class="btn-ivory" style="width:100%;" onclick="closeReportToLobby()">다음 시뮬레이션으로 ▶</button>
+    </div>`;
+
+  document.getElementById('reportModal').classList.add('open');
+  requestAnimationFrame(() => {
+    card.querySelectorAll('.report-bar-fill').forEach(el => { el.style.width = el.dataset.w; });
+  });
+};
+// =========================================================================
+// [로그 출력 패치] 모든 구역 유저/NPC/유령 채팅 시간순 전체 기록 및 HTML 출력
+// =========================================================================
+
+let fullSessionChatLog = [];
+
+// 1. 새 매치 시작 시 전체 채팅 기록 배열 초기화
+const _baseLaunchPlayForFullChat = launchPlay;
+launchPlay = async function(code, isHost, c, spawnNpcCount = null, isSolo = false, opts = {}) {
+  fullSessionChatLog = [];
+  await _baseLaunchPlayForFullChat(code, isHost, c, spawnNpcCount, isSolo, opts);
+};
+
+// 2. 내가 보낸 채팅(일반/유령/전투채팅)을 시간·구역과 함께 전체 기록에 저장
+const _basePostRefChatForArchive = postRefChat;
+postRefChat = async function() {
+  const c = getPickedChar();
+  const inp = document.getElementById('refChatInput');
+  const txt = inp ? inp.value.trim() : '';
+  if (!play.finished && c && txt && (play.me.alive || isSpectatingNow)) {
+    const zObj = ISLAND_ZONES.find(x => x.id === play.me.zone);
+    fullSessionChatLog.push({
+      time: fmtClock(),
+      zoneName: zObj ? zObj.name : '섬 전체',
+      sender: play.me.alive ? c.name : `[사망] ${c.name}`,
+      text: txt,
+      isSys: false,
+      avatar: play.me.avatar || null
+    });
+  }
+  await _basePostRefChatForArchive();
+};
+
+const _baseSendBattleChatForArchive = sendBattleChat;
+sendBattleChat = async function() {
+  const c = getPickedChar();
+  const inp = document.getElementById('mBatChatIn');
+  const txt = inp ? inp.value.trim() : '';
+  if (c && txt) {
+    const zObj = ISLAND_ZONES.find(x => x.id === play.me.zone);
+    fullSessionChatLog.push({
+      time: fmtClock(),
+      zoneName: `${zObj ? zObj.name : '섬'}·교전`,
+      sender: c.name,
+      text: txt,
+      isSys: false,
+      avatar: play.me.avatar || null
+    });
+  }
+  await _baseSendBattleChatForArchive();
+};
+
+// 3. 다른 구역의 모든 유저 채팅·유령 채팅·NPC 대사·속보까지 실시간으로 시간순 수집
+const _baseBindGameRealtimeForArchive = bindGameRealtime;
+bindGameRealtime = function() {
+  _baseBindGameRealtimeForArchive();
+  if (!play.code) return;
+  const archiveChan = sb.channel('full-archive-' + play.code)
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'room_messages', filter: `room_code=eq.${play.code}` }, p => {
+      const msg = p.new;
+      const myName = getPickedChar()?.name;
+      if (!msg) return;
+
+      // 시스템 속보
+      if (msg.msg_type === 'sys') {
+        fullSessionChatLog.push({
+          time: fmtClock(),
+          zoneName: '전체 방송',
+          sender: 'SYS',
+          text: msg.content,
+          isSys: true,
+          avatar: null
+        });
+        return;
+      }
+
+      // 다른 구역 포함 모든 유저 일반 채팅 & 유령 채팅
+      if (msg.sender !== myName && (!msg.msg_type || msg.msg_type === 'normal' || msg.msg_type === 'ghost')) {
+        const zObj = ISLAND_ZONES.find(x => x.id === msg.zone);
+        const senderLabel = msg.msg_type === 'ghost' ? `[사망] ${msg.sender}` : msg.sender;
+        fullSessionChatLog.push({
+          time: fmtClock(),
+          zoneName: zObj ? zObj.name : (msg.zone || '전체'),
+          sender: senderLabel,
+          text: msg.content,
+          isSys: false,
+          avatar: getParticipantAvatar(msg.sender)
+        });
+        return;
+      }
+
+      // NPC 대사도 시간순으로 함께 기록
+      if (msg.msg_type === 'npc_say') {
+        try {
+          const parsed = JSON.parse(msg.content);
+          const zObj = ISLAND_ZONES.find(x => x.id === msg.zone);
+          fullSessionChatLog.push({
+            time: fmtClock(),
+            zoneName: zObj ? zObj.name : (msg.zone || '전체'),
+            sender: msg.sender,
+            text: parsed.text || msg.content,
+            isSys: false,
+            avatar: null
+          });
+        } catch (e) {}
+      }
+    })
+    .subscribe();
+};
+
+// 4. 로그 출력하기 (HTML): 전체 구역 채팅 기록을 시간순으로 조립해 출력
+exportTistoryHtmlLog = function(cause, rankNum, grade, totalScore, finalComment) {
+  const c = getPickedChar();
+  if (!c) return;
+  const memo = (document.getElementById('reportMemoIn')?.value || '').trim();
+  const logHtml = document.getElementById('refGameLog')?.innerHTML || '<p>행동 기록 없음</p>';
+  const nowDate = new Date().toLocaleString('ko-KR');
+
+  // 시간순 전체 구역 채팅 조립
+  const allChatHtml = fullSessionChatLog.length
+    ? fullSessionChatLog.map(item => {
+        if (item.isSys) {
+          return `<div class="ref-chat-sys">※ [${esc(item.time)}] ${esc(item.text)}</div>`;
+        }
+        const cleanName = String(item.sender || '').replace(/^\[사망\]\s*/, '').trim();
+        const avHtml = item.avatar ? `<img src="${item.avatar}" alt="">` : esc(cleanName.slice(0, 1));
+        return `
+          <div class="ref-chat-row">
+            <div class="ref-chat-av">${avHtml}</div>
+            <div>
+              <div class="ref-chat-meta">${esc(item.sender)} [${esc(item.zoneName)}] · ${esc(item.time)}</div>
+              <div class="ref-chat-bubble">${esc(item.text)}</div>
+            </div>
+          </div>`;
+      }).join('')
+    : (document.getElementById('refChatLog')?.innerHTML || '<p>채팅 기록 없음</p>');
+
+  const doc = `<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>戀人式 기록 - ${esc(c.name)} (제 ${c.plays || 1}회)</title>
+<style>
+  @font-face {
+    font-family: 'DungGeunMo';
+    src: url('https://fastly.jsdelivr.net/gh/projectnoonnu/noonfonts_2001@1.1/DungGeunMo.woff') format('woff');
+  }
+  body { background:#182036; color:#eae2ce; font-family:'DungGeunMo', monospace; padding:20px; line-height:1.6; }
+  .wrap { max-width:780px; margin:0 auto; background:#141c30; border:3px solid #eae2ce; padding:20px; }
+  h1, h2 { background:#eae2ce; color:#141c30; padding:6px 12px; font-size:16px; margin:18px 0 10px; }
+  .meta { background:#101729; border:2px solid #8ea3cc; padding:12px; font-size:13px; }
+  .box { background:#0e1424; border:2px solid #6f89bd; padding:12px; font-size:12px; max-height:none; }
+  .ref-chat-row { display:flex; gap:8px; margin-bottom:8px; }
+  .ref-chat-av { width:28px; height:28px; border:1px solid #8ea3cc; display:flex; align-items:center; justify-content:center; flex-shrink:0; overflow:hidden; }
+  .ref-chat-av img { width:100%; height:100%; object-fit:cover; }
+  .ref-chat-meta { font-size:11px; color:#8eb8ff; }
+  .ref-chat-bubble { background:#192642; border:1px solid #7d95c7; padding:5px 8px; margin-top:2px; }
+  .ref-chat-sys { color:#9ec2ff; margin:4px 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>戀人式 (연인식 프로젝트) — 실험 기록 백업</h1>
+  <div class="meta">
+    <div><strong>실험체:</strong> ${esc(c.name)} (실험체-${c.exp_number} · ${esc(c.club)})</div>
+    <div><strong>결과:</strong> ${rankNum}위 / ${TARGET_HEADCOUNT}명 · 종합등급 <strong>${esc(grade)}</strong> (${totalScore}점)</div>
+    <div><strong>종료 사유:</strong> ${esc(cause)} · 기록 일시: ${esc(nowDate)}</div>
+    <div style="margin-top:6px;color:#a9c4f7;"><strong>[사후 분석 총평]</strong> ${esc(finalComment)}</div>
+    ${memo ? `<div style="margin-top:6px;color:#f5efe2;"><strong>[실험체 한줄 소감]</strong> "${esc(memo)}"</div>` : ''}
+  </div>
+  <h2>1. 행동 및 사건 기록</h2>
+  <div class="box">${logHtml}</div>
+  <h2>2. 전체 구역 채팅 및 속보 로그 (시간순 통합 · 총 ${fullSessionChatLog.length}건)</h2>
+  <div class="box">${allChatHtml}</div>
+</div>
+</body>
+</html>`;
+
+  const blob = new Blob([doc], { type: 'text/html;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `연인식_${c.name}_${c.plays || 1}회차_로그.html`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+};
+// =========================================================================
+// [단체방 시간 조절 패치] 35분 / 40분 / 50분 / 1시간 / 1시간 반 / 2시간 설정
+// =========================================================================
+
+waitRoom.durationMin = 35;
+play.durationMin = 35;
+
+function getScaledTimingConfig(durationMin) {
+  const dur = Math.max(35, Number(durationMin) || 35);
+  const scale = dur / 35;
+  return {
+    durationMin: dur,
+    closeCycleSec: Math.round(CLOSE_CYCLE_SEC * scale),
+    closeWarnSec: Math.round(CLOSE_WARN_SEC * scale),
+    gameMinPerRealSec: GAME_MIN_PER_REAL_SEC / scale
+  };
+}
+
+// 1. 대기실 UI에 게임 시간 버튼 활성화 상태 동기화
+const _baseRenderWaitRoomUIForDur = renderWaitRoomUI;
+renderWaitRoomUI = function() {
+  _baseRenderWaitRoomUIForDur();
+  const curDur = Number(waitRoom.durationMin || 35);
+  [35, 40, 50, 60, 90, 120].forEach(m => {
+    const btn = document.getElementById('optDur' + m);
+    if (btn) {
+      btn.classList.toggle('on', curDur === m);
+      btn.disabled = !waitRoom.host;
+    }
+  });
+};
+
+// 2. 방장 옵션 변경 시 durationMin 함께 브로드캐스트
+setWaitOption = async function(key, val) {
+  if (!waitRoom.host || !waitRoom.code) return;
+  waitRoom[key] = val;
+  renderWaitRoomUI();
+  await sb.from('room_messages').insert([{
+    room_code: waitRoom.code,
+    sender: 'SYS',
+    zone: 'wait',
+    msg_type: 'wait_opt',
+    content: JSON.stringify({
+      gameMode: waitRoom.gameMode || 'adult',
+      spawnMode: waitRoom.spawnMode,
+      ghostChat: waitRoom.ghostChat,
+      durationMin: Number(waitRoom.durationMin || 35)
+    })
+  }]);
+};
+
+// 3. 대기실 실시간 수신에서 durationMin 반영 & 방장 시작 시 전달
+const _baseBindWaitRoomForDur = bindWaitRoomRealtime;
+bindWaitRoomRealtime = function() {
+  if (waitRoom.chan) sb.removeChannel(waitRoom.chan);
+  waitRoom.chan = sb.channel('wait-' + waitRoom.code)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'room_players', filter: `room_code=eq.${waitRoom.code}` }, async () => {
+      await reloadWaitRoomMembers();
+      const myAv = getPickedChar()?.avatar_data;
+      if (myAv && waitRoom.code) {
+        await sb.from('room_messages').insert([{
+          room_code: waitRoom.code, sender: getPickedChar().name, zone: 'wait', msg_type: 'wait_avatar', content: myAv
+        }]);
+      }
+    })
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'room_messages', filter: `room_code=eq.${waitRoom.code}` }, async p => {
+      const msg = p.new;
+      if (msg.msg_type === 'wait_chat' && msg.sender !== getPickedChar()?.name) {
+        appendWaitChat(msg.sender, msg.content);
+      } else if (msg.msg_type === 'wait_avatar' && msg.sender !== getPickedChar()?.name) {
+        humanStateMap[msg.sender] = { ...(humanStateMap[msg.sender] || {}), avatar: msg.content };
+        renderWaitRoomUI();
+      } else if (msg.msg_type === 'wait_opt') {
+        try {
+          const parsed = JSON.parse(msg.content);
+          waitRoom.gameMode = parsed.gameMode || 'adult';
+          waitRoom.spawnMode = parsed.spawnMode || 'random';
+          waitRoom.ghostChat = parsed.ghostChat || 'ghost_only';
+          waitRoom.durationMin = Number(parsed.durationMin || 35);
+          renderWaitRoomUI();
+        } catch (e) {}
+      } else if (msg.msg_type === 'room_deleted') {
+        if (waitRoom.chan) { sb.removeChannel(waitRoom.chan); waitRoom.chan = null; }
+        waitRoom.code = null; play.pid = null;
+        alert('방이 삭제되어 로비로 이동합니다.');
+        await startWithCurrentChar();
+      }
+    })
+    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'rooms', filter: `code=eq.${waitRoom.code}` }, async p => {
+      if (p.new.status === 'playing') {
+        const c = getPickedChar();
+        const amIHostNow = waitRoom.host || (p.new.host_name === c?.name);
+        if (waitRoom.chan) { sb.removeChannel(waitRoom.chan); waitRoom.chan = null; }
+        await launchPlay(waitRoom.code, amIHostNow, c, null, false, {
+          existingPid: play.pid,
+          spawnMode: waitRoom.spawnMode,
+          ghostChat: waitRoom.ghostChat,
+          gameMode: waitRoom.gameMode || 'adult',
+          durationMin: Number(waitRoom.durationMin || 35)
+        });
+      }
+    })
+    .subscribe();
+};
+
+hostStartWaitRoomMatch = async function() {
+  if (!waitRoom.host || !waitRoom.code) return;
+  const mainBtn = document.getElementById('waitMainActionBtn');
+  if (mainBtn) {
+    mainBtn.disabled = true;
+    mainBtn.textContent = '시뮬레이션 시작 중...';
+  }
+  try {
+    const c = getPickedChar();
+    const humanCnt = Math.max(1, waitRoom.members.length);
+    const npcCnt = await insertMatchedNpcs(waitRoom.code, humanCnt);
+    await sb.from('rooms').update({ status: 'playing' }).eq('code', waitRoom.code);
+    if (waitRoom.chan) { sb.removeChannel(waitRoom.chan); waitRoom.chan = null; }
+    await launchPlay(waitRoom.code, true, c, npcCnt, false, {
+      existingPid: play.pid,
+      spawnMode: waitRoom.spawnMode,
+      ghostChat: waitRoom.ghostChat,
+      gameMode: waitRoom.gameMode || 'adult',
+      durationMin: Number(waitRoom.durationMin || 35)
+    });
+  } catch (err) {
+    appendWaitChat('SYS', `시작 중 오류가 발생했습니다: ${err?.message || err}`);
+    renderWaitRoomUI();
+  }
+};
+
+// 4. launchPlay 시 설정된 게임 시간(durationMin)에 맞춰 폐쇄 주기 및 초기 타이머 적용
+const _baseLaunchPlayForDur = launchPlay;
+launchPlay = async function(code, isHost, c, spawnNpcCount = null, isSolo = false, opts = {}) {
+  const durMin = isSolo ? 35 : Number(opts.durationMin || waitRoom.durationMin || 35);
+  await _baseLaunchPlayForDur(code, isHost, c, spawnNpcCount, isSolo, opts);
+  play.durationMin = durMin;
+  const cfg = getScaledTimingConfig(durMin);
+  play.closeSec = cfg.closeCycleSec;
+
+  if (!isSolo && durMin !== 35) {
+    const cMin = Math.floor(cfg.closeCycleSec / 60);
+    const cSec = cfg.closeCycleSec % 60;
+    const durLabel = durMin === 60 ? '1시간' : (durMin === 90 ? '1시간 반' : (durMin === 120 ? '2시간' : `${durMin}분`));
+    await appendGameLog(`[${fmtClock()}] 【시간 설정】 단체방 진행 시간 '${durLabel}' 모드 적용 (${cMin}분 ${cSec}초마다 2구역 폐쇄)`, true);
+  }
+  refreshGameUI();
+};
+
+// 5. 실시간 루프에서 선택된 게임 시간 비율에 맞게 시간 흐름 & 폐쇄 주기 동기화
+const _origSetInterval = window.setInterval;
+startGameLoops = function() {
+  if (play.tickTimer) clearInterval(play.tickTimer);
+  let tickBusy = false;
+  play.tickTimer = _origSetInterval(async () => {
+    if (play.paused || play.finished || tickBusy) return;
+    tickBusy = true;
+    try {
+      const cfg = getScaledTimingConfig(play.isSolo ? 35 : (play.durationMin || 35));
+      const mult = play.isSolo ? play.speed : 1;
+      const minDelta = cfg.gameMinPerRealSec * mult;
+      play.minutes += minDelta;
+      play.hourTickCarry += minDelta;
+      while (play.minutes >= 1440) {
+        play.minutes -= 1440;
+        play.day++;
+      }
+      while (play.hourTickCarry >= 60) {
+        play.hourTickCarry -= 60;
+        await applyHourlyConditions();
+        if (play.finished) return;
+      }
+
+      const h = Math.floor((play.minutes % 1440) / 60);
+      const curPhase = (h >= 6 && h < 18) ? 'day' : 'night';
+
+      if (isSleepingNow && play.me.alive) {
+        if (curPhase === 'night') {
+          play.nightSleepMinutes = Math.min(180, (play.nightSleepMinutes || 0) + minDelta);
+        }
+        sleepHealCarry += minDelta;
+        if (sleepHealCarry >= 60) {
+          sleepHealCarry -= 60;
+          if (play.me.hp < play.me.maxHp) {
+            play.me.hp = Math.min(play.me.maxHp, play.me.hp + 1);
+            if (play.pid) await sb.from('room_players').update({ hp: play.me.hp }).eq('id', play.pid);
+          }
+          if (play.nightSleepMinutes >= 180) removeMyCondition('피로');
+          await broadcastMyStateSync();
+        }
+      }
+
+      if (curPhase !== lastDayPhase) {
+        const prevPhase = lastDayPhase;
+        lastDayPhase = curPhase;
+        triggerPhaseFlash(curPhase);
+        bgm.setMode(curPhase);
+        if (curPhase === 'night') {
+          play.nightSleepMinutes = 0;
+          await appendGameLog(`[${fmtClock()}] 밤이 찾아왔다. 아침이 오기 전까지 3시간 수면이 필요하다.`, true);
+        } else if (curPhase === 'day' && prevPhase === 'night') {
+          if (play.me.alive) {
+            if (play.nightSleepMinutes < 180) {
+              addMyCondition('피로');
+              await appendGameLog(`[${fmtClock()}] 밤 수면 3시간을 채우지 못해 '피로' 상태가 되었다!`, true);
+            } else {
+              removeMyCondition('피로');
+              await appendGameLog(`[${fmtClock()}] 밤 3시간 수면을 채워 '피로'가 풀렸다.`, true);
+            }
+            await broadcastMyStateSync();
+          }
+          watchOvernight = false;
+          isSleepingNow = false;
+          sleepHealCarry = 0;
+          await appendGameLog(`[${fmtClock()}] 날이 밝았다.`, true);
+        }
+      }
+
+      play.closeSec -= (play.isSolo ? play.speed : 1);
+
+      if (play.host && !play.isSolo && Math.floor(play.closeSec) % 3 === 0) {
+        sb.from('room_messages').insert([{
+          room_code: play.code,
+          sender: 'SYS',
+          zone: 'all',
+          msg_type: 'time_sync',
+          content: JSON.stringify({
+            day: play.day,
+            minutes: play.minutes,
+            closeSec: play.closeSec,
+            nextBanned: play.nextBanned,
+            banned: play.banned,
+            durationMin: play.durationMin
+          })
+        }]);
+      }
+
+      if (play.host && play.closeSec <= cfg.closeWarnSec && play.nextBanned.length === 0) {
+        const openAll = ISLAND_ZONES.filter(z => !play.banned.includes(z.id));
+        if (openAll.length > CLOSE_PER_STEP) {
+          const pickedIds = [...openAll].sort(() => Math.random() - 0.5).slice(0, CLOSE_PER_STEP).map(z => z.id);
+          play.nextBanned = pickedIds;
+          const warnNames = play.nextBanned.map(id => ISLAND_ZONES.find(z => z.id === id)?.name).filter(Boolean);
+          if (warnNames.length) {
+            const alertMsg = `잠시 후 ${warnNames.join(', ')} 구역 폐쇄 예정!`;
+            sfx.beep();
+            setMarqueeAlert(alertMsg);
+            await appendGameLog(`[${fmtClock()}] 【경고】 ${alertMsg}`, true);
+            if (!play.isSolo) {
+              await sb.from('room_messages').insert([{
+                room_code: play.code,
+                sender: 'SYS',
+                zone: 'all',
+                msg_type: 'close_warn',
+                content: JSON.stringify({ nextBanned: play.nextBanned, alertMsg })
+              }]);
+            }
+          }
+        }
+      }
+
+      if (play.host && play.closeSec <= 0) {
+        await triggerZoneClosure();
+        play.closeSec = cfg.closeCycleSec;
+      }
+
+      // NPC 이동 및 교전 (긴장감 있는 속도로 동작)
+      if (play.host) {
+        const safe = ISLAND_ZONES.filter(z => !play.banned.includes(z.id));
+        const aliveNpcs = play.players.filter(p => p.is_npc && p.alive);
+        const lateGame = safe.length <= 10;
+
+        const npcMoveProb = play.day === 1 ? 0.16 : (lateGame ? 0.30 : 0.22);
+        if (aliveNpcs.length && safe.length > 0 && Math.random() < npcMoveProb) {
+          const npc = aliveNpcs[Math.floor(Math.random() * aliveNpcs.length)];
+          if (!play.me.allies.includes(npc.name)) {
+            const dest = safe[Math.floor(Math.random() * safe.length)].id;
+            npc.zone = dest;
+            await sb.from('room_players').update({ zone: dest }).eq('id', npc.id);
+          }
+        }
+
+        const randomClashProb = play.day === 1 ? 0.024 : (lateGame ? 0.11 : Math.min(0.085, 0.038 + (play.day - 2) * 0.015));
+        if (aliveNpcs.length >= 2 && Math.random() < randomClashProb) {
+          const attacker = aliveNpcs[Math.floor(Math.random() * aliveNpcs.length)];
+          const coPresent = play.players.filter(p => p.alive && p.zone === attacker.zone && p.id !== attacker.id && p.is_npc);
+          if (coPresent.length > 0) {
+            const victim = coPresent[Math.floor(Math.random() * coPresent.length)];
+            const lethalProb = play.day === 1 ? 0.14 : (lateGame ? 0.48 : 0.32);
+            const dmg = Math.random() < lethalProb ? (victim.hp || 15) : (4 + Math.floor(Math.random() * 4));
+            const nextHp = Math.max(0, (victim.hp || 15) - dmg);
+            victim.hp = nextHp;
+            if (nextHp === 0) {
+              victim.alive = false;
+              await sb.from('room_players').update({ hp: 0, alive: false }).eq('id', victim.id);
+              const remCnt = Math.max(1, play.players.filter(p => p.alive).length);
+              const news = `[속보] ${victim.name}이(가) ${attacker.name}에게 살해당했습니다. (생존 ${remCnt}명)`;
+              sfx.deathAlert();
+              setMarqueeAlert(`${victim.name} 사망!! (생존 ${remCnt}명)`);
+              await appendGameLog(`[${fmtClock()}] ${news}`, true);
+              await sb.from('room_messages').insert([{
+                room_code: play.code, sender: 'SYS', zone: 'all', msg_type: 'sys', content: news
+              }]);
+            } else {
+              await sb.from('room_players').update({ hp: nextHp }).eq('id', victim.id);
+            }
+          }
+        }
+      }
+
+      refreshGameUI();
+      drawIslandMap();
+    } finally {
+      tickBusy = false;
+    }
+  }, 1000);
+};
+// =========================================================================
+// [전투 동료 피격/전사 & 장소별 모노테마 HTML 로그 추출 패치]
+// =========================================================================
+
+// 1. 적이 공격할 때 일정 확률(35%)로 전투 중인 동료 NPC에게도 딜이 들어가며 전사 가능
+const _baseMEnemyTurnForAllyHit = mEnemyTurn;
+mEnemyTurn = async function(singleStep = true) {
+  const aliveAllies = (modalState.allyFighters || []).filter(a => a && a.hp > 0);
+
+  // 아군 동료가 1명 이상 살아있고, 주 공격 대상(나) 외에 35% 확률로 동료 NPC를 공격 대상으로 선택
+  if (aliveAllies.length > 0 && modalState.enemyHp > 0 && Math.random() < 0.35) {
+    const targetAlly = aliveAllies[Math.floor(Math.random() * aliveAllies.length)];
+    const enSt = getNpcState(modalState.enemyName);
+    const enWep = enSt?.bag?.find(x => x.type === 'weapon');
+    const wepName = enWep ? enWep.name : '맨손';
+    const baseAtk = enWep ? (enWep.atk || 3) : 2;
+    const hitChance = Math.max(0.35, 0.72 - ((targetAlly.agi || 3) - 3) * 0.04);
+
+    if (Math.random() > hitChance) {
+      appendModalBattleLog(`${modalState.enemyName}의 공격을 동료 ${targetAlly.name}이(가) 날렵하게 회피했다!`);
+    } else {
+      const dmg = Math.max(1, baseAtk + Math.floor(Math.random() * 2) - 1);
+      targetAlly.hp = Math.max(0, targetAlly.hp - dmg);
+      const st = getNpcState(targetAlly.name);
+      if (st) st.hp = targetAlly.hp;
+      const pRow = play.players.find(p => p.name === targetAlly.name && p.alive);
+
+      appendModalBattleLog(`${modalState.enemyName}이(가) 동료 ${targetAlly.name}을(를) '${wepName}'(으)로 강타! (-${dmg}, 남은 HP ${targetAlly.hp}/15)`);
+
+      if (targetAlly.hp === 0) {
+        // 전투 중 동료 NPC 전사 처리
+        if (pRow) {
+          pRow.hp = 0;
+          pRow.alive = false;
+          await sb.from('room_players').update({ hp: 0, alive: false }).eq('id', pRow.id);
+        }
+        play.me.allies = (play.me.allies || []).filter(n => n !== targetAlly.name);
+        if (play.me.selectedAlly === targetAlly.name) play.me.selectedAlly = play.me.allies[0] || null;
+
+        const remCnt = Math.max(1, play.players.filter(pl => pl.alive).length);
+        const deathNews = `[속보] ${targetAlly.name}이(가) ${modalState.enemyName}와(과)의 교전 중 사망했습니다. (생존 ${remCnt}명)`;
+        sfx.deathAlert();
+        setMarqueeAlert(`${targetAlly.name} 전사!! (생존 ${remCnt}명)`);
+        appendModalBattleLog(`★ 동료 ${targetAlly.name}이(가) 치명상을 입고 쓰러졌다! (동맹 해제)`);
+        await appendGameLog(`[${fmtClock()}] ${deathNews}`, true);
+        if (!play.isSolo && play.code) {
+          await sb.from('room_messages').insert([{
+            room_code: play.code, sender: 'SYS', zone: 'all', msg_type: 'sys', content: deathNews
+          }]);
+        }
+        refreshGameUI();
+      } else if (pRow) {
+        await sb.from('room_players').update({ hp: targetAlly.hp }).eq('id', pRow.id);
+      }
+      renderModalBattleHp();
+    }
+
+    // 적 턴 종료 후 플레이어 턴 복귀 및 살아있는 다른 동료 지원 공격
+    modalState.turn = 'player';
+    updateModalBattleButtons();
+    return;
+  }
+
+  // 주 공격 대상(나)을 노릴 때는 기존 적 턴 로직 실행
+  await _baseMEnemyTurnForAllyHit(singleStep);
+};
+
+// 2. 로그 출력하기 (HTML): 행동/사건 기록 제거 + 장소별 채팅 그룹화 + 고급 모노 테마(#E0E0DE / #2D2D2D)
+exportTistoryHtmlLog = function(cause, rankNum, grade, totalScore, finalComment) {
+  const c = getPickedChar();
+  if (!c) return;
+  const memo = (document.getElementById('reportMemoIn')?.value || '').trim();
+  const nowDate = new Date().toLocaleString('ko-KR');
+  const rawLogs = Array.isArray(fullSessionChatLog) ? fullSessionChatLog : [];
+
+  // 장소(구역)별로 채팅 그룹화 (등장 순서 유지)
+  const zoneGroups = new Map();
+  rawLogs.forEach(item => {
+    const zKey = item.zoneName || '섬 전체';
+    if (!zoneGroups.has(zKey)) zoneGroups.set(zKey, []);
+    zoneGroups.get(zKey).push(item);
+  });
+
+  let zonesSectionHtml = '';
+  if (zoneGroups.size === 0) {
+    zonesSectionHtml = `<div class="empty-note">기록된 구역별 대화 내역이 없습니다.</div>`;
+  } else {
+    zoneGroups.forEach((items, zName) => {
+      const rowsHtml = items.map(item => {
+        if (item.isSys) {
+          return `<div class="sys-line"><span class="sys-badge">방송</span> [${esc(item.time)}] ${esc(item.text)}</div>`;
+        }
+        const cleanName = String(item.sender || '').replace(/^\[사망\]\s*/, '').trim();
+        const isGhost = String(item.sender || '').startsWith('[사망]');
+        const avHtml = item.avatar
+          ? `<img src="${item.avatar}" alt="">`
+          : `<span>${esc(cleanName.slice(0, 1) || '?')}</span>`;
+
+        return `
+          <div class="chat-row ${isGhost ? 'is-ghost' : ''}">
+            <div class="chat-av">${avHtml}</div>
+            <div class="chat-body">
+              <div class="chat-meta">
+                <strong>${esc(item.sender)}</strong>
+                <span class="chat-time">${esc(item.time)}</span>
+              </div>
+              <div class="chat-bubble">${esc(item.text)}</div>
+            </div>
+          </div>`;
+      }).join('');
+
+      zonesSectionHtml += `
+        <section class="zone-block">
+          <div class="zone-header">
+            <span class="zone-title">■ ${esc(zName)}</span>
+            <span class="zone-count">대화 ${items.length}건</span>
+          </div>
+          <div class="zone-body">${rowsHtml}</div>
+        </section>`;
+    });
+  }
+
+  const doc = `<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>戀人式 기록부 — ${esc(c.name)} (제 ${c.plays || 1}회)</title>
+<style>
+  @font-face {
+    font-family: 'DungGeunMo';
+    src: url('https://fastly.jsdelivr.net/gh/projectnoonnu/noonfonts_2001@1.1/DungGeunMo.woff') format('woff');
+    font-weight: normal;
+    font-style: normal;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 28px 16px;
+    background: #E0E0DE;
+    color: #2D2D2D;
+    font-family: 'DungGeunMo', 'Malgun Gothic', monospace;
+    line-height: 1.65;
+  }
+  .archive-sheet {
+    max-width: 820px;
+    margin: 0 auto;
+    background: #E0E0DE;
+    border: 3px solid #2D2D2D;
+    box-shadow: 0 0 0 3px #E0E0DE, 0 0 0 5px #2D2D2D;
+    padding: 24px;
+  }
+  .doc-header {
+    border-bottom: 3px solid #2D2D2D;
+    padding-bottom: 14px;
+    margin-bottom: 18px;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .doc-title-main {
+    font-size: 24px;
+    font-weight: bold;
+    letter-spacing: 3px;
+  }
+  .doc-title-sub {
+    font-size: 12px;
+    opacity: 0.8;
+    margin-top: 2px;
+  }
+  .doc-stamp {
+    background: #2D2D2D;
+    color: #E0E0DE;
+    padding: 6px 14px;
+    font-size: 14px;
+    font-weight: bold;
+    letter-spacing: 1px;
+  }
+  .summary-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 10px;
+    background: #EBEBE9;
+    border: 2px solid #2D2D2D;
+    padding: 14px;
+    margin-bottom: 14px;
+    font-size: 13px;
+  }
+  .summary-item span.lbl {
+    display: inline-block;
+    background: #2D2D2D;
+    color: #E0E0DE;
+    padding: 1px 6px;
+    font-size: 11px;
+    margin-right: 6px;
+  }
+  .comment-box {
+    background: #D6D6D3;
+    border: 2px solid #2D2D2D;
+    padding: 12px 14px;
+    font-size: 13px;
+    margin-bottom: 22px;
+  }
+  .memo-line {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px dashed #2D2D2D;
+    font-weight: bold;
+  }
+  .section-bar {
+    background: #2D2D2D;
+    color: #E0E0DE;
+    padding: 7px 14px;
+    font-size: 14px;
+    letter-spacing: 1px;
+    margin-bottom: 14px;
+    display: flex;
+    justify-content: space-between;
+  }
+  .zone-block {
+    border: 2px solid #2D2D2D;
+    background: #EBEBE9;
+    margin-bottom: 16px;
+  }
+  .zone-header {
+    background: #D6D6D3;
+    border-bottom: 2px solid #2D2D2D;
+    padding: 6px 12px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 14px;
+    font-weight: bold;
+  }
+  .zone-count {
+    font-size: 11px;
+    font-weight: normal;
+    background: #2D2D2D;
+    color: #E0E0DE;
+    padding: 1px 7px;
+  }
+  .zone-body {
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .chat-row {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+  }
+  .chat-row.is-ghost {
+    opacity: 0.72;
+  }
+  .chat-av {
+    width: 34px;
+    height: 34px;
+    background: #2D2D2D;
+    color: #E0E0DE;
+    border: 1px solid #2D2D2D;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    flex-shrink: 0;
+    overflow: hidden;
+  }
+  .chat-av img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .chat-body {
+    flex: 1;
+    min-width: 0;
+  }
+  .chat-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    margin-bottom: 3px;
+  }
+  .chat-time {
+    font-size: 11px;
+    opacity: 0.7;
+  }
+  .chat-bubble {
+    background: #E0E0DE;
+    border: 1px solid #2D2D2D;
+    padding: 6px 10px;
+    font-size: 13px;
+    word-break: break-word;
+  }
+  .sys-line {
+    background: #D6D6D3;
+    border-left: 3px solid #2D2D2D;
+    padding: 5px 10px;
+    font-size: 12px;
+  }
+  .sys-badge {
+    background: #2D2D2D;
+    color: #E0E0DE;
+    padding: 1px 5px;
+    font-size: 10px;
+    margin-right: 4px;
+  }
+  .empty-note {
+    border: 2px dashed #2D2D2D;
+    padding: 20px;
+    text-align: center;
+    font-size: 13px;
+    opacity: 0.75;
+  }
+  .doc-footer {
+    margin-top: 20px;
+    padding-top: 10px;
+    border-top: 2px solid #2D2D2D;
+    font-size: 11px;
+    text-align: right;
+    opacity: 0.75;
+  }
+</style>
+</head>
+<body>
+<div class="archive-sheet">
+  <header class="doc-header">
+    <div>
+      <div class="doc-title-main">戀人式 · 實驗現場 대화 기록부</div>
+      <div class="doc-title-sub">第 57 回 시뮬레이션 아카이브 · 출력 일시: ${esc(nowDate)}</div>
+    </div>
+    <div class="doc-stamp">최종 ${rankNum}위 · 등급 ${esc(grade)} (${totalScore}점)</div>
+  </header>
+
+  <div class="summary-grid">
+    <div class="summary-item"><span class="lbl">실험체</span>${esc(c.name)} (No.${c.exp_number})</div>
+    <div class="summary-item"><span class="lbl">소속</span>${esc(c.club)}</div>
+    <div class="summary-item"><span class="lbl">종료 사유</span>${esc(cause)}</div>
+    <div class="summary-item"><span class="lbl">누적 회차</span>제 ${c.plays || 1}회차 실험</div>
+  </div>
+
+  <div class="comment-box">
+    <div><strong>[사후 분석 총평]</strong> ${esc(finalComment)}</div>
+    ${memo ? `<div class="memo-line">[실험체 한줄 소감] "${esc(memo)}"</div>` : ''}
+  </div>
+
+  <div class="section-bar">
+    <span>구역(장소)별 현장 대화 아카이브</span>
+    <span>총 ${zoneGroups.size}개 구역 · ${rawLogs.length}건</span>
+  </div>
+
+  ${zonesSectionHtml}
+
+  <footer class="doc-footer">
+    戀人式 (연인식 프로젝트) — 공식 실험 기록 백업 문서
+  </footer>
+</div>
+</body>
+</html>`;
+
+  const blob = new Blob([doc], { type: 'text/html;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `연인식_${c.name}_${c.plays || 1}회차_장소별기록부.html`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+};

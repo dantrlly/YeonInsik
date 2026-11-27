@@ -7,6 +7,10 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
+<div id="globalThemeBar" style="position:fixed; top:6px; right:10px; z-index:9999; display:flex; gap:4px; background:rgba(20,28,48,0.88); border:1px solid #8ea3cc; padding:3px 6px;">
+  <button type="button" class="ref-mini-btn on" id="btnThemeNavy" onclick="setGlobalTheme('navy')">네이비</button>
+  <button type="button" class="ref-mini-btn" id="btnThemeMono" onclick="setGlobalTheme('mono')">모노 </button>
+</div>
 <div class="phase-flash" id="phaseFlash"></div>
 
 <!-- 1. 타이틀 -->
@@ -260,31 +264,32 @@
       <span id="waitRoomBanner">[대기실] · 방 코드 #----</span>
       <button type="button" class="btn-navy" style="padding:3px 8px; font-size:11px;" onclick="copyWaitRoomCode()">코드 복사</button>
     </div>
-
-    <div class="wait-opts-grid" style="grid-template-columns: repeat(3, 1fr);">
-      <div class="wait-opt-box">
-        <span class="wait-opt-lbl">게임 모드</span>
-        <div class="wait-opt-btns">
-          <button type="button" class="ref-mini-btn on" id="optModeAdult" onclick="setWaitOption('gameMode', 'adult')">성인식</button>
-          <button type="button" class="ref-mini-btn" id="optModeLover" onclick="setWaitOption('gameMode', 'lover')">연인식</button>
-        </div>
-      </div>
-      <div class="wait-opt-box">
-        <span class="wait-opt-lbl">시작 장소</span>
-        <div class="wait-opt-btns">
-          <button type="button" class="ref-mini-btn on" id="optSpawnSchool" onclick="setWaitOption('spawnMode', 'school')">폐교 통일</button>
-          <button type="button" class="ref-mini-btn" id="optSpawnRandom" onclick="setWaitOption('spawnMode', 'random')">무작위 배치</button>
-        </div>
-      </div>
-      <div class="wait-opt-box">
-        <span class="wait-opt-lbl">유령 채팅</span>
-        <div class="wait-opt-btns">
-          <button type="button" class="ref-mini-btn on" id="optGhostOnly" onclick="setWaitOption('ghostChat', 'ghost_only')">사망자끼리만</button>
-          <button type="button" class="ref-mini-btn" id="optGhostPublic" onclick="setWaitOption('ghostChat', 'public_ghost')">생존자도 보임</button>
-        </div>
-      </div>
+<div class="wait-opts-compact" style="display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:6px 10px; border:1px solid #6f89bd; padding:5px 8px; margin-bottom:8px; font-size:11px;">
+      <span style="display:inline-flex; align-items:center; gap:3px;">
+        <strong style="opacity:0.8;">모드</strong>
+        <button type="button" class="ref-mini-btn on" id="optModeAdult" onclick="setWaitOption('gameMode', 'adult')">성인식</button>
+        <button type="button" class="ref-mini-btn" id="optModeLover" onclick="setWaitOption('gameMode', 'lover')">연인식</button>
+      </span>
+      <span style="display:inline-flex; align-items:center; gap:3px;">
+        <strong style="opacity:0.8;">배치</strong>
+        <button type="button" class="ref-mini-btn on" id="optSpawnRandom" onclick="setWaitOption('spawnMode', 'random')">무작위</button>
+        <button type="button" class="ref-mini-btn" id="optSpawnSchool" onclick="setWaitOption('spawnMode', 'school')">폐교</button>
+      </span>
+      <span style="display:inline-flex; align-items:center; gap:3px;">
+        <strong style="opacity:0.8;">유령</strong>
+        <button type="button" class="ref-mini-btn on" id="optGhostOnly" onclick="setWaitOption('ghostChat', 'ghost_only')">비공개</button>
+        <button type="button" class="ref-mini-btn" id="optGhostPublic" onclick="setWaitOption('ghostChat', 'public_ghost')">전체공개</button>
+      </span>
+      <span style="display:inline-flex; align-items:center; gap:3px;">
+        <strong style="opacity:0.8;">시간</strong>
+        <button type="button" class="ref-mini-btn on" id="optDur35" onclick="setWaitOption('durationMin', 35)">35분</button>
+        <button type="button" class="ref-mini-btn" id="optDur40" onclick="setWaitOption('durationMin', 40)">40분</button>
+        <button type="button" class="ref-mini-btn" id="optDur50" onclick="setWaitOption('durationMin', 50)">50분</button>
+        <button type="button" class="ref-mini-btn" id="optDur60" onclick="setWaitOption('durationMin', 60)">1h</button>
+        <button type="button" class="ref-mini-btn" id="optDur90" onclick="setWaitOption('durationMin', 90)">1.5h</button>
+        <button type="button" class="ref-mini-btn" id="optDur120" onclick="setWaitOption('durationMin', 120)">2h</button>
+      </span>
     </div>
-
     <div class="wait-slot-grid" id="waitSlotGrid"></div>
 
     <div class="wait-status-sub" id="waitStatusSub">다른 실험체를 기다리는 중...</div>

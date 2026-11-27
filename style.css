@@ -639,3 +639,310 @@ font-size: 11px; margin-bottom: 6px;
 .ref-top-grid, .ref-bot-grid { grid-template-columns: 1fr; height: auto; }
 .rec-body, .lobby-2col { grid-template-columns: 1fr; }
 }
+/* ================= 모노 테마 (#E0E0DE 배경 / #2D2D2D 검정) 100% 통합 ================= */
+body.theme-mono {
+  background: #E0E0DE !important;
+  color: #2D2D2D !important;
+}
+
+/* 1. 모든 인라인 하늘색/아이보리색 글자 강제 검정(#2D2D2D) 통일 */
+body.theme-mono * {
+  color: #2D2D2D;
+}
+body.theme-mono [style*="color:#8eb8ff"],
+body.theme-mono [style*="color: #8eb8ff"],
+body.theme-mono [style*="color:#c7d6f5"],
+body.theme-mono [style*="color: #c7d6f5"],
+body.theme-mono [style*="color:#9ab4e6"],
+body.theme-mono [style*="color: #9ab4e6"],
+body.theme-mono [style*="color:#a9c4f7"],
+body.theme-mono [style*="color: #a9c4f7"],
+body.theme-mono [style*="color:#dce8ff"],
+body.theme-mono [style*="color: #dce8ff"],
+body.theme-mono [style*="color:#96add9"],
+body.theme-mono [style*="color: #96add9"],
+body.theme-mono [style*="color:#eae2ce"],
+body.theme-mono [style*="color: #eae2ce"],
+body.theme-mono [style*="color:#fff"],
+body.theme-mono [style*="color: #fff"],
+body.theme-mono [style*="color:#ffffff"],
+body.theme-mono [style*="color: #ffffff"],
+body.theme-mono [style*="color:#ffb4a2"],
+body.theme-mono [style*="color: #ffb4a2"] {
+  color: #2D2D2D !important;
+}
+
+/* 2. 인라인 남색/어두운 배경 박스 강제 밝은 모노 배경 통일 */
+body.theme-mono [style*="background:#101729"],
+body.theme-mono [style*="background: #101729"],
+body.theme-mono [style*="background:#141c30"],
+body.theme-mono [style*="background: #141c30"],
+body.theme-mono [style*="background:#182036"],
+body.theme-mono [style*="background: #182036"],
+body.theme-mono [style*="background:#293b66"],
+body.theme-mono [style*="background: #293b66"] {
+  background: #D6D6D3 !important;
+  color: #2D2D2D !important;
+  border-color: #2D2D2D !important;
+}
+
+/* 3. 주요 컨테이너 프레임 */
+body.theme-mono .frame-box,
+body.theme-mono .rec-pane,
+body.theme-mono .ref-panel,
+body.theme-mono .ref-right,
+body.theme-mono .ref-clock-box,
+body.theme-mono .ref-close-banner,
+body.theme-mono .wait-top-bar,
+body.theme-mono .wait-opt-box,
+body.theme-mono .wait-chat-box,
+body.theme-mono .room-list,
+body.theme-mono .room-item,
+body.theme-mono .char-pick-card,
+body.theme-mono .wait-slot-card,
+body.theme-mono .ref-ally-card,
+body.theme-mono .ref-ally-menu {
+  background: #E0E0DE !important;
+  color: #2D2D2D !important;
+  border-color: #2D2D2D !important;
+  box-shadow: 0 0 0 2px #E0E0DE, inset 0 0 0 1px #2D2D2D !important;
+}
+
+/* 4. 상단 타이틀 바 & 헤더 스트립 (검정 배경 + 밝은 글씨) */
+body.theme-mono .ivory-strip,
+body.theme-mono .ref-alive-banner,
+body.theme-mono .ref-panel-bar,
+body.theme-mono .ref-chat-head,
+body.theme-mono .ref-char-head,
+body.theme-mono .ref-bag-title,
+body.theme-mono .ref-marquee,
+body.theme-mono .modal-top-bar {
+  background: #2D2D2D !important;
+  color: #E0E0DE !important;
+  border-color: #2D2D2D !important;
+  box-shadow: none !important;
+}
+body.theme-mono .ivory-strip *,
+body.theme-mono .ref-alive-banner *,
+body.theme-mono .ref-panel-bar *,
+body.theme-mono .ref-chat-head span,
+body.theme-mono .ref-char-head *,
+body.theme-mono .ref-bag-title *,
+body.theme-mono .ref-marquee *,
+body.theme-mono .modal-top-bar * {
+  color: #E0E0DE !important;
+}
+
+/* 5. 카드 및 팝업 모달 */
+body.theme-mono .ref-char-card,
+body.theme-mono .center-modal-box,
+body.theme-mono .report-card {
+  background: #E0E0DE !important;
+  color: #2D2D2D !important;
+  border-color: #2D2D2D !important;
+  box-shadow: 0 0 0 2px #2D2D2D !important;
+}
+
+/* 6. 주요 버튼 (검정 배경 + 밝은 글씨) */
+body.theme-mono .btn-ivory,
+body.theme-mono .ref-act-btn,
+body.theme-mono .ref-send-btn,
+body.theme-mono .sq-btn,
+body.theme-mono .modal-act-btn {
+  background: #2D2D2D !important;
+  color: #E0E0DE !important;
+  border-color: #2D2D2D !important;
+  box-shadow: inset 1px 1px 0 #555555, 0 2px 0 #1a1a1a !important;
+}
+body.theme-mono .btn-ivory *,
+body.theme-mono .ref-act-btn *,
+body.theme-mono .ref-send-btn *,
+body.theme-mono .modal-act-btn * {
+  color: #E0E0DE !important;
+}
+body.theme-mono .btn-ivory:hover:not(:disabled),
+body.theme-mono .ref-act-btn:hover:not(:disabled),
+body.theme-mono .modal-act-btn:hover:not(:disabled) {
+  background: #424242 !important;
+}
+
+/* 7. 보조 버튼 (밝은 배경 + 검정 글씨) */
+body.theme-mono .btn-navy,
+body.theme-mono .ref-mini-btn,
+body.theme-mono .ref-tab-btn,
+body.theme-mono .club-btn,
+body.theme-mono .ref-ally-act-btn {
+  background: #E0E0DE !important;
+  color: #2D2D2D !important;
+  border-color: #2D2D2D !important;
+  box-shadow: none !important;
+}
+body.theme-mono .btn-navy.on,
+body.theme-mono .ref-mini-btn.on,
+body.theme-mono .ref-tab-btn.on,
+body.theme-mono .club-btn.on {
+  background: #2D2D2D !important;
+  color: #E0E0DE !important;
+}
+
+/* 8. 입력창, 채팅 말풍선, 전리품 칸 */
+body.theme-mono .txt-input,
+body.theme-mono .ref-chat-foot input,
+body.theme-mono .wait-chat-foot input,
+body.theme-mono .enc-card,
+body.theme-mono .bat-pop-side,
+body.theme-mono .bat-pop-log,
+body.theme-mono .loot-pane,
+body.theme-mono .loot-slot,
+body.theme-mono .ref-chat-bubble,
+body.theme-mono .ref-chat-row.player-row .ref-chat-bubble {
+  background: #EBEBE9 !important;
+  color: #2D2D2D !important;
+  border-color: #2D2D2D !important;
+  box-shadow: none !important;
+}
+
+/* 9. 빈 슬롯 및 지도 외곽 */
+body.theme-mono .ref-chat-foot,
+body.theme-mono .ref-map-wrap,
+body.theme-mono .dashed-add-slot,
+body.theme-mono .wait-slot-empty,
+body.theme-mono .wait-slot-closed {
+  background: #D5D5D2 !important;
+  color: #2D2D2D !important;
+  border-color: #2D2D2D !important;
+}
+
+/* 10. 게이지바 및 초상화 박스 */
+body.theme-mono .ref-gauge-fill-hp,
+body.theme-mono .ref-gauge-fill-hg,
+body.theme-mono .report-bar-fill,
+body.theme-mono .bat-pop-seg.on,
+body.theme-mono .sq-pip.fill {
+  background: #2D2D2D !important;
+}
+body.theme-mono .ref-gauge-track,
+body.theme-mono .report-bar-track,
+body.theme-mono .bat-pop-seg {
+  background: #C8C8C5 !important;
+  border-color: #2D2D2D !important;
+}
+body.theme-mono .bgm-vol-slider {
+  accent-color: #2D2D2D !important;
+}
+body.theme-mono .ref-portrait-sq,
+body.theme-mono .mini-portrait,
+body.theme-mono .detail-portrait,
+body.theme-mono .report-portrait,
+body.theme-mono .ref-chat-av,
+body.theme-mono .wait-slot-av,
+body.theme-mono .plus-avatar {
+  background: #2D2D2D !important;
+  color: #E0E0DE !important;
+  border-color: #2D2D2D !important;
+}
+body.theme-mono .ref-loc-tag,
+body.theme-mono #globalThemeBar {
+  background: #E0E0DE !important;
+  color: #2D2D2D !important;
+  border-color: #2D2D2D !important;
+}
+
+/* 11. 컷신 모달 (모노 테마 전용) */
+body.theme-mono #cutsceneModal {
+  background: #E0E0DE !important;
+}
+body.theme-mono #cutsceneBox,
+body.theme-mono #cutsceneVisualBox {
+  background: #E0E0DE !important;
+  color: #2D2D2D !important;
+  border-color: #2D2D2D !important;
+}
+body.theme-mono #cutsceneVisualBox * {
+  color: #2D2D2D !important;
+}
+body.theme-mono #cutsceneTextBox {
+  background: #2D2D2D !important;
+  color: #E0E0DE !important;
+  border-color: #2D2D2D !important;
+}
+body.theme-mono #cutsceneTextBox * {
+  color: #E0E0DE !important;
+}
+body.theme-mono .logo-big {
+  color: #2D2D2D !important;
+  text-shadow: 2px 2px 0 #BDBDBA !important;
+  -webkit-font-smoothing: antialiased !important;
+}
+/* ================= 모노 테마 전투 미니창 색상 패치 ================= */
+body.theme-mono .bat-mini-fighter,
+body.theme-mono [style*="background:#eae2ce"],
+body.theme-mono [style*="background: #eae2ce"] {
+  background: #EBEBE9 !important;
+  color: #2D2D2D !important;
+  border: 1px solid #2D2D2D !important;
+  box-shadow: none !important;
+}
+body.theme-mono .bat-mini-av {
+  background: #2D2D2D !important;
+  color: #E0E0DE !important;
+  border: 1px solid #2D2D2D !important;
+}
+body.theme-mono .bat-mini-bar {
+  background: #C8C8C5 !important;
+  border: 1px solid #2D2D2D !important;
+}
+body.theme-mono .bat-mini-fill {
+  background: #2D2D2D !important;
+}
+/* ================= 모노 테마 디테일 보완 (배지 · 기록 로그 · 동료 카드) ================= */
+
+/* 1. 캐릭터 상세 화면 순위 기록 배지 배경 밝게 고정 */
+body.theme-mono #detailRankHistoryVal span {
+  background: #EBEBE9 !important;
+  color: #2D2D2D !important;
+  border: 1px solid #2D2D2D !important;
+}
+
+/* 2. 인게임 기록(로그) 창 모든 줄 검정 글씨로 선명하게 표시 */
+body.theme-mono #refGameLog,
+body.theme-mono #refGameLog *,
+body.theme-mono .ref-log-area,
+body.theme-mono .ref-log-area * {
+  color: #2D2D2D !important;
+}
+
+/* 3. 모노 테마 동료 카드 테두리 겹침 및 글씨 잘림 방지 */
+body.theme-mono .ref-ally-card {
+  box-shadow: none !important;
+  border: 1px solid #2D2D2D !important;
+  padding: 6px 8px !important;
+  overflow: hidden !important;
+  box-sizing: border-box !important;
+}
+body.theme-mono .ref-ally-menu {
+  box-shadow: none !important;
+  border: 1px solid #2D2D2D !important;
+  padding: 6px 8px !important;
+  max-height: 210px !important;
+  overflow-y: auto !important;
+  box-sizing: border-box !important;
+}
+/* ... existing code ... */
+
+/* ================= 모노 테마 대기실 채팅창 글자색 보완 ================= */
+body.theme-mono #waitChatLog,
+body.theme-mono #waitChatLog *,
+body.theme-mono .wait-chat-box,
+body.theme-mono .wait-chat-box * {
+color: #2D2D2D !important;
+}
+/* ================= 대기실 옵션 바 슬림 정리 & 모노 테마 대응 ================= */
+body.theme-mono .wait-opts-compact {
+  border-color: #2D2D2D !important;
+  background: #EBEBE9 !important;
+}
+.wait-slot-card, .wait-slot-empty, .wait-slot-closed {
+  min-height: 62px !important;
+  padding: 6px 8px !important;
+}
